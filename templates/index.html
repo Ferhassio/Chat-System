@@ -68,7 +68,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            z-index: 1000;
+            z-index: 9999;
         }
 
         .error-content {
@@ -199,7 +199,7 @@
                         <div class="mb-3">
                             <label for="botWorkspace" class="form-label">Workspace</label>
                             <select class="form-select" id="botWorkspace" required>
-                                <!-- Workspaces will be added here -->
+                                <!-- Options will be added dynamically -->
                             </select>
                         </div>
                         <div class="mb-3">
@@ -214,7 +214,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="addBotSubmitBtn">Add</button>
+                    <button type="button" class="btn btn-primary" id="addBotSubmitBtn">Add Bot</button>
                 </div>
             </div>
         </div>
@@ -244,7 +244,15 @@
         });
         document.getElementById('logoutBtn').addEventListener('click', logout);
         document.getElementById('createWorkspaceSubmitBtn').addEventListener('click', createWorkspace);
-        document.getElementById('addBotSubmitBtn').addEventListener('click', addBot);
+        document.getElementById('addBotSubmitBtn').addEventListener('click', async (e) => {
+            e.preventDefault();  // Prevent default form submission
+            const workspaceId = document.getElementById('botWorkspace').value;
+            if (!workspaceId) {
+                showError('Пожалуйста, выберите рабочее пространство');
+                return;
+            }
+            await addBot(workspaceId);
+        });
         document.getElementById('sendMessageBtn').addEventListener('click', sendMessage);
         document.getElementById('messageInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
@@ -265,6 +273,15 @@
                 if (response.ok) {
                     const workspaces = await response.json();
                     displayWorkspaces(workspaces);
+                    
+                    // If there's a current workspace, update its name
+                    if (currentWorkspaceId) {
+                        const currentWorkspace = workspaces.find(w => w.id === currentWorkspaceId);
+                        if (currentWorkspace) {
+                            currentWorkspaceName = currentWorkspace.name;
+                        }
+                    }
+                    
                 } else if (response.status === 401) {
                     localStorage.removeItem('accessToken');
                     window.location.replace('/auth');
@@ -278,14 +295,22 @@
             const workspaceList = document.getElementById('workspaceList');
             workspaceList.innerHTML = workspaces.map(workspace => `
                 <a href="#" class="list-group-item list-group-item-action workspace-item" data-id="${workspace.id}">
-                    ${workspace.name}
+                    <h6 class="mb-0">${workspace.name}</h6>
                 </a>
             `).join('');
 
             // Add click handlers
             workspaceList.querySelectorAll('.workspace-item').forEach(item => {
                 item.addEventListener('click', () => {
+                    stopMessageUpdates();  // Stop updates when changing workspace
                     currentWorkspaceId = item.dataset.id;
+                    currentWorkspaceName = item.querySelector('h6').textContent;
+                    currentChatId = null;  // Reset current chat
+                    
+                    // Clear chat window
+                    document.getElementById('messageList').innerHTML = '';
+                    document.getElementById('chatTitle').textContent = 'Select a chat';
+                    
                     document.querySelectorAll('.workspace-item').forEach(i => i.classList.remove('active'));
                     item.classList.add('active');
                     loadChats(currentWorkspaceId);
@@ -301,14 +326,21 @@
                 if (response.ok) {
                     const chats = await response.json();
                     
+                    // Store chats globally for reference
+                    window.chats = chats;
+                    
                     // If there are chats but none is selected, select the most recent one
                     if (chats.length > 0 && !currentChatId) {
                         currentChatId = chats[0].id;
                         document.getElementById('chatTitle').textContent = `Chat with @${chats[0].username}`;
                         loadMessages(workspaceId, currentChatId);
+                    } else if (chats.length === 0) {
+                        // If no chats available, clear the chat window
+                        document.getElementById('messageList').innerHTML = '';
+                        document.getElementById('chatTitle').textContent = 'No chats available';
                     }
                     
-                    displayChats(chats);
+                    displayChats(chats, workspaceId);
                 } else if (response.status === 401) {
                     localStorage.removeItem('accessToken');
                     window.location.replace('/auth');
@@ -318,13 +350,17 @@
             }
         }
 
-        function displayChats(chats) {
+        function displayChats(chats, workspaceId) {
             const chatList = document.getElementById('chatList');
+            // Get workspace name for this specific workspace
+            const workspaceElement = document.querySelector(`.workspace-item[data-id="${workspaceId}"]`);
+            const workspaceName = workspaceElement ? workspaceElement.querySelector('h6').textContent : '';
+            
             chatList.innerHTML = chats.map(chat => `
-                <a href="#" class="list-group-item list-group-item-action chat-item" data-id="${chat.id}">
+                <a href="#" class="list-group-item list-group-item-action chat-item" data-id="${chat.id}" data-workspace-id="${workspaceId}">
                     <div class="d-flex justify-content-between align-items-center">
                         <div>
-                            <h6 class="mb-0">@${chat.username} (${chat.workspace_id})</h6>
+                            <h6 class="mb-0">@${chat.username} <span class="text-dark">(${workspaceName})</span></h6>
                             <small class="text-muted">ID: ${chat.telegram_id}</small>
                         </div>
                         ${chat.last_message_at ? `<small class="text-muted">${new Date(chat.last_message_at).toLocaleString()}</small>` : ''}
@@ -335,7 +371,10 @@
             // Add click handlers
             chatList.querySelectorAll('.chat-item').forEach(item => {
                 item.addEventListener('click', () => {
+                    const workspaceId = item.dataset.workspaceId;
+                    currentWorkspaceId = workspaceId;
                     currentChatId = item.dataset.id;
+                    
                     document.querySelectorAll('.chat-item').forEach(i => i.classList.remove('active'));
                     item.classList.add('active');
                     
@@ -345,7 +384,10 @@
                         document.getElementById('chatTitle').textContent = `Chat with @${chat.username}`;
                     }
                     
-                    loadMessages(currentWorkspaceId, currentChatId);
+                    // Clear message list before loading new messages
+                    document.getElementById('messageList').innerHTML = '';
+                    loadMessages(workspaceId, currentChatId);
+                    startMessageUpdates();
                 });
             });
 
@@ -366,6 +408,7 @@
                 if (response.ok) {
                     const messages = await response.json();
                     displayMessages(messages);
+                    startMessageUpdates();  // Start updates after loading messages
                 } else if (response.status === 401) {
                     localStorage.removeItem('accessToken');
                     window.location.replace('/auth');
@@ -379,14 +422,23 @@
             const messageList = document.getElementById('messageList');
             const wasAtBottom = messageList.scrollHeight - messageList.scrollTop === messageList.clientHeight;
             
-            messageList.innerHTML = messages.map(message => `
-                <div class="message ${message.direction === 'outgoing' ? 'message-outgoing' : 'message-incoming'}">
+            // Clear existing messages
+            messageList.innerHTML = '';
+            
+            // Add all messages
+            messages.forEach(message => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${message.direction === 'outgoing' ? 'message-outgoing' : 'message-incoming'}`;
+                messageDiv.dataset.chatId = currentChatId;
+                messageDiv.dataset.workspaceId = currentWorkspaceId;  // Add workspace ID
+                messageDiv.innerHTML = `
                     <div class="message-content">
                         <div class="message-text">${message.content}</div>
                         <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
                     </div>
-                </div>
-            `).join('');
+                `;
+                messageList.appendChild(messageDiv);
+            });
 
             // Only scroll to bottom if we were at the bottom before
             if (wasAtBottom) {
@@ -394,33 +446,11 @@
             }
         }
 
-        // Update messages more frequently
-        let isLoadingMessages = false;
-        let messageUpdateInterval;
-
-        async function updateMessages() {
-            if (!currentWorkspaceId || !currentChatId || isLoadingMessages) return;
-            
-            isLoadingMessages = true;
-            const messageList = document.getElementById('messageList');
-            try {
-                await loadMessages(currentWorkspaceId, currentChatId);
-            } catch (error) {
-                console.error('Error updating messages:', error);
-            } finally {
-                isLoadingMessages = false;
-            }
-        }
-
+        // Start message updates when selecting a chat
         function startMessageUpdates() {
-            // Clear any existing interval
-            if (messageUpdateInterval) {
-                clearInterval(messageUpdateInterval);
-            }
-            // Update every 500ms
+            stopMessageUpdates();  // Clear any existing interval first
             messageUpdateInterval = setInterval(updateMessages, 500);
-            // Do an immediate update
-            updateMessages();
+            updateMessages();  // Do an immediate update
         }
 
         function stopMessageUpdates() {
@@ -444,26 +474,6 @@
             
             // Start message updates
             startMessageUpdates();
-        }
-
-        // Update the displayMessages function to preserve scroll position
-        function displayMessages(messages) {
-            const messageList = document.getElementById('messageList');
-            const wasAtBottom = messageList.scrollHeight - messageList.scrollTop === messageList.clientHeight;
-            
-            messageList.innerHTML = messages.map(message => `
-                <div class="message ${message.direction === 'outgoing' ? 'message-outgoing' : 'message-incoming'}">
-                    <div class="message-content">
-                        <div class="message-text">${message.content}</div>
-                        <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
-                    </div>
-                </div>
-            `).join('');
-
-            // Only scroll to bottom if we were at the bottom before
-            if (wasAtBottom) {
-                messageList.scrollTop = messageList.scrollHeight;
-            }
         }
 
         // Clean up on page unload
@@ -533,6 +543,7 @@
                 const response = await fetch(`/api/workspaces/${workspaceId}/bots`, {
                     method: 'POST',
                     headers: {
+                        'Authorization': `Bearer ${accessToken}`,
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
@@ -547,7 +558,7 @@
                 // Clear form and close modal
                 document.getElementById('botName').value = '';
                 document.getElementById('botToken').value = '';
-                document.getElementById('addBotModal').style.display = 'none';
+                addBotModal.hide();  // Use Bootstrap modal method to hide
                 
             } catch (error) {
                 console.error('Error adding bot:', error);
@@ -569,18 +580,33 @@
                 });
                 
                 if (response.ok) {
+                    // Clear input immediately
                     document.getElementById('messageInput').value = '';
-                    await loadMessages(currentWorkspaceId, currentChatId);
+                    
+                    // Add the sent message immediately
+                    const message = await response.json();
+                    const messageList = document.getElementById('messageList');
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message message-outgoing';
+                    messageDiv.dataset.chatId = currentChatId;  // Add chat ID to message element
+                    messageDiv.innerHTML = `
+                        <div class="message-content">
+                            <div class="message-text">${message.content}</div>
+                            <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
+                        </div>
+                    `;
+                    messageList.appendChild(messageDiv);
+                    messageList.scrollTop = messageList.scrollHeight;
                 } else if (response.status === 401) {
                     localStorage.removeItem('accessToken');
                     window.location.replace('/auth');
                 } else {
                     const data = await response.json();
-                    alert(data.detail || 'Failed to send message');
+                    showError(data.detail || 'Не удалось отправить сообщение');
                 }
             } catch (error) {
                 console.error('Error sending message:', error);
-                alert('An error occurred while sending message');
+                showError('Произошла ошибка при отправке сообщения');
             }
         }
 
@@ -610,6 +636,54 @@
                 </div>
             `;
             document.body.appendChild(errorDiv);
+        }
+
+        // Add currentWorkspaceName variable and update it when loading workspaces
+        let currentWorkspaceName = '';
+
+        // Start updates if there's already a selected chat when loading the page
+        if (currentWorkspaceId && currentChatId) {
+            startMessageUpdates();
+        }
+
+        // Message update variables and function
+        let isLoadingMessages = false;
+        let messageUpdateInterval;
+
+        async function updateMessages() {
+            if (!currentWorkspaceId || !currentChatId || isLoadingMessages) return;
+            
+            isLoadingMessages = true;
+            try {
+                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/messages`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                
+                if (response.ok) {
+                    const messages = await response.json();
+                    const messageList = document.getElementById('messageList');
+                    
+                    // Get current messages for this specific chat and workspace
+                    const currentMessages = Array.from(messageList.children)
+                        .filter(el => el.dataset.chatId === currentChatId && el.dataset.workspaceId === currentWorkspaceId);
+                    
+                    // If we have new messages
+                    if (messages.length > currentMessages.length) {
+                        // Clear existing messages and display all messages
+                        displayMessages(messages);
+                        
+                        // Update chat list to reflect new messages
+                        loadChats(currentWorkspaceId);
+                    }
+                } else if (response.status === 401) {
+                    localStorage.removeItem('accessToken');
+                    window.location.replace('/auth');
+                }
+            } catch (error) {
+                console.error('Error updating messages:', error);
+            } finally {
+                isLoadingMessages = false;
+            }
         }
     </script>
 </body>

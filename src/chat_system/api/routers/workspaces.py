@@ -253,10 +253,11 @@ async def send_message(
     if not success:
         raise HTTPException(status_code=500, detail="Failed to send message")
     
-    # Get the saved message
+    # Get the saved message (get the latest one)
     result = await session.execute(
-        select(Message).where(
-            Message.chat_id == chat_id,
-        ).order_by(Message.sent_at.desc())
+        select(Message)
+        .where(Message.chat_id == chat_id)
+        .order_by(Message.sent_at.desc())
+        .limit(1)
     )
     return result.scalar_one() 
