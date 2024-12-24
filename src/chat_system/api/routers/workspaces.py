@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from src.chat_system.api.deps import get_current_user, get_session
 from src.chat_system.api.schemas import (
@@ -15,8 +16,10 @@ from src.chat_system.api.schemas import (
     MessageResponse,
     WorkspaceCreate,
     WorkspaceResponse,
+    UserResponse,
+    WorkspaceUserCreate,
 )
-from src.chat_system.db.models import Bot, Chat, Message, User, Workspace
+from src.chat_system.db.models import Bot, Chat, Message, User, Workspace, WorkspaceUser
 from src.chat_system.telegram.manager import telegram_manager
 
 router = APIRouter()
@@ -42,9 +45,16 @@ async def get_workspaces(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> List[Workspace]:
-    """Get all workspaces for current user"""
+    """Get all workspaces for current user (both owned and member of)"""
     result = await session.execute(
-        select(Workspace).where(Workspace.owner_id == current_user.id)
+        select(Workspace).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
     )
     return result.scalars().all()
 
@@ -76,7 +86,7 @@ async def add_bot(
         if existing_bot:
             raise HTTPException(
                 status_code=400, 
-                detail="Бот с таким токеном уже зарегистрирован в другом рабочем пространстве. Пожалуйста, используйте другой токен бота."
+                detail="Бот с таким токеном уже зарегистрирован в другом рабочем пространстве. Пожалуйста, испол��зуйте другой токен бота."
             )
 
         # Initialize bot first to validate token
@@ -190,13 +200,31 @@ async def get_chats(
     session: AsyncSession = Depends(get_session),
 ) -> List[Chat]:
     """Get all chats in workspace"""
+    # Check if user has access to workspace (either owner or member)
+    workspace_access = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+        ).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
+    )
+    
+    workspace = workspace_access.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(
+            status_code=404, 
+            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
+        )
+
+    # Get all chats for the workspace
     result = await session.execute(
         select(Chat)
-        .join(Workspace, Chat.workspace_id == Workspace.id)
-        .where(
-            Chat.workspace_id == workspace_id,
-            Workspace.owner_id == current_user.id,
-        )
+        .where(Chat.workspace_id == workspace_id)
         .order_by(Chat.last_message_at.desc())
     )
     return result.scalars().all()
@@ -209,14 +237,34 @@ async def get_messages(
     session: AsyncSession = Depends(get_session),
 ) -> List[Message]:
     """Get all messages in chat"""
+    # Check if user has access to workspace (either owner or member)
+    workspace_access = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+        ).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
+    )
+    
+    workspace = workspace_access.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(
+            status_code=404, 
+            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
+        )
+
+    # Get all messages for the chat
     result = await session.execute(
         select(Message)
         .join(Chat, Message.chat_id == Chat.id)
-        .join(Workspace, Chat.workspace_id == Workspace.id)
         .where(
             Message.chat_id == chat_id,
             Chat.workspace_id == workspace_id,
-            Workspace.owner_id == current_user.id,
         )
         .order_by(Message.sent_at.asc())
     )
@@ -231,18 +279,37 @@ async def send_message(
     session: AsyncSession = Depends(get_session),
 ) -> Message:
     """Send message to chat"""
-    # Check chat exists and belongs to user's workspace
+    # Check if user has access to workspace (either owner or member)
+    workspace_access = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+        ).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
+    )
+    
+    workspace = workspace_access.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(
+            status_code=404, 
+            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
+        )
+
+    # Check if chat exists and belongs to workspace
     result = await session.execute(
         select(Chat).where(
             Chat.id == chat_id,
             Chat.workspace_id == workspace_id,
-            Workspace.id == workspace_id,
-            Workspace.owner_id == current_user.id,
         )
     )
     chat = result.scalar_one_or_none()
     if not chat:
-        raise HTTPException(status_code=404, detail="Chat not found")
+        raise HTTPException(status_code=404, detail="Чат не найден")
     
     # Send message via Telegram
     success = await telegram_manager.send_message(
@@ -251,7 +318,7 @@ async def send_message(
         text=message.content,
     )
     if not success:
-        raise HTTPException(status_code=500, detail="Failed to send message")
+        raise HTTPException(status_code=500, detail="Не удалось отправить сообщение")
     
     # Get the saved message (get the latest one)
     result = await session.execute(
@@ -260,4 +327,129 @@ async def send_message(
         .order_by(Message.sent_at.desc())
         .limit(1)
     )
-    return result.scalar_one() 
+    return result.scalar_one()
+
+@router.get("/{workspace_id}/users", response_model=List[UserResponse])
+async def get_workspace_users(
+    workspace_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> List[User]:
+    """Get all users in workspace"""
+    # Check if current user has access to workspace
+    workspace = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == current_user.id,
+        )
+    )
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Get all users in workspace
+    result = await session.execute(
+        select(User)
+        .join(WorkspaceUser, WorkspaceUser.user_id == User.id)
+        .where(WorkspaceUser.workspace_id == workspace_id)
+    )
+    users = result.scalars().all()
+    
+    # Add owner to the list if not already included
+    owner_in_list = any(user.id == workspace.owner_id for user in users)
+    if not owner_in_list:
+        owner = await session.get(User, workspace.owner_id)
+        if owner:
+            users.append(owner)
+    
+    # Add is_owner flag to each user
+    for user in users:
+        user.is_owner = user.id == workspace.owner_id
+    
+    return users
+
+@router.post("/{workspace_id}/users", response_model=UserResponse)
+async def add_workspace_user(
+    workspace_id: UUID,
+    user_data: WorkspaceUserCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """Add user to workspace"""
+    # Check if current user is workspace owner
+    workspace = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == current_user.id,
+        )
+    )
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission")
+
+    # Find user by email
+    result = await session.execute(
+        select(User).where(User.email == user_data.email)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Check if user is already in workspace
+    result = await session.execute(
+        select(WorkspaceUser).where(
+            WorkspaceUser.workspace_id == workspace_id,
+            WorkspaceUser.user_id == user.id,
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="User is already in workspace")
+
+    # Add user to workspace
+    workspace_user = WorkspaceUser(
+        workspace_id=workspace_id,
+        user_id=user.id,
+    )
+    session.add(workspace_user)
+    await session.commit()
+
+    return user
+
+@router.delete("/{workspace_id}/users/{user_id}")
+async def remove_workspace_user(
+    workspace_id: UUID,
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove user from workspace"""
+    # Check if current user is workspace owner
+    workspace = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == current_user.id,
+        )
+    )
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission")
+
+    # Cannot remove workspace owner
+    if user_id == workspace.owner_id:
+        raise HTTPException(status_code=400, detail="Cannot remove workspace owner")
+
+    # Remove user from workspace
+    result = await session.execute(
+        select(WorkspaceUser).where(
+            WorkspaceUser.workspace_id == workspace_id,
+            WorkspaceUser.user_id == user_id,
+        )
+    )
+    workspace_user = result.scalar_one_or_none()
+    if not workspace_user:
+        raise HTTPException(status_code=404, detail="User not found in workspace")
+
+    await session.delete(workspace_user)
+    await session.commit()
+
+    return {"status": "success"} 

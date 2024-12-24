@@ -152,60 +152,43 @@ class TelegramManager:
             return False
     
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming messages"""
-        try:
-            # Skip non-message updates
-            if not update.message:
-                logger.debug("Skipping non-message update")
-                return
-                
-            # Skip non-text messages
-            if not update.message.text:
-                logger.debug("Skipping non-text message")
-                return
+        """Handle incoming message"""
+        if not update.message or not update.message.text:
+            logger.debug("Skipping non-message or non-text update")
+            return
 
-            # Get workspace ID from bot token
-            token = context.bot.token
-            workspace_id = self._workspace_by_token.get(token)
+        message = update.message
+        logger.info(f"Processing message: {message.text[:20]}... from chat {message.chat.id}")
+        
+        # Get workspace_id for this bot using token
+        token = context.bot.token
+        workspace_id = self._workspace_by_token.get(token)
+                
+        if not workspace_id:
+            logger.error(f"Could not find workspace for bot token {token}")
+            return
             
-            if not workspace_id:
-                logger.error(f"No workspace found for bot token {token}")
-                return
+        # Create session and process message
+        async with async_session_factory() as session:
+            processor = MessageProcessor(session)
             
-            logger.info(f"Processing message: {update.message.text[:50]}... from chat {update.message.chat.id}")
-            
-            # Process message with retries
-            max_retries = 3
-            for attempt in range(max_retries):
+            for attempt in range(1, 4):  # 3 attempts
                 try:
-                    async with self._session_factory() as session:
-                        try:
-                            processor = MessageProcessor(session)
-                            await processor.process_message(
-                                workspace_id=workspace_id,
-                                telegram_id=update.message.chat.id,
-                                username=update.message.from_user.username or "",
-                                text=update.message.text,
-                                sent_at=update.message.date,
-                            )
-                            await session.commit()
-                            logger.info(f"Successfully processed message from chat {update.message.chat.id}")
-                            return
-                        except Exception as e:
-                            logger.error(f"Failed to process message (attempt {attempt + 1}/{max_retries}): {str(e)}", exc_info=True)
-                            await session.rollback()
-                            if attempt == max_retries - 1:  # Last attempt
-                                raise
+                    await processor.process_message(
+                        workspace_id=workspace_id,
+                        message=message
+                    )
+                    logger.info(f"Successfully processed message for workspace {workspace_id}, chat {message.chat.id}")
+                    await session.commit()
+                    break
                 except Exception as e:
-                    logger.error(f"Session error (attempt {attempt + 1}/{max_retries}): {str(e)}", exc_info=True)
-                    if attempt == max_retries - 1:  # Last attempt
-                        raise
-                
-                # Wait before retry
-                await asyncio.sleep(1)
-                
-        except Exception as e:
-            logger.error(f"Error handling message: {str(e)}", exc_info=True)
+                    if attempt == 3:  # Last attempt
+                        logger.error(f"Session error (attempt {attempt}/3): {str(e)}", exc_info=True)
+                        await session.rollback()
+                    else:
+                        logger.error(f"Failed to process message (attempt {attempt}/3): {str(e)}", exc_info=True)
+                        await session.rollback()
+                        await asyncio.sleep(1)  # Wait before retry
 
     async def get_bot_info(self, workspace_id: UUID):
         """Get bot information"""
