@@ -1,9 +1,13 @@
 import logging
 from datetime import datetime
 from uuid import UUID
+import aiohttp
+import base64
+from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import func
 
 from src.chat_system.db.models import Chat, Message
 from src.chat_system.db.enums import MessageDirection
@@ -15,7 +19,46 @@ class MessageProcessor:
         self._session = session
         self._logger = logging.getLogger(__name__)
 
-    async def _get_or_create_chat(self, workspace_id: UUID, telegram_id: int, username: str) -> Chat:
+    async def _get_photo_data(self, photo_url: str) -> Optional[bytes]:
+        """Download photo from Telegram and convert to bytes"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_url) as response:
+                    if response.status == 200:
+                        return await response.read()
+        except Exception as e:
+            self._logger.error(f"Failed to download photo: {str(e)}")
+        return None
+
+    async def _update_chat_photo(self, chat_id: UUID, photo_url: str) -> None:
+        """Update chat's photo data"""
+        try:
+            photo_data = await self._get_photo_data(photo_url)
+            if photo_data:
+                await self._session.execute(
+                    update(Chat)
+                    .where(Chat.id == chat_id)
+                    .values(
+                        photo_url=photo_url,
+                        photo_data=photo_data,
+                        updated_at=func.now()
+                    )
+                )
+                await self._session.commit()
+                self._logger.info(f"Updated chat photo data for chat {chat_id}")
+            else:
+                self._logger.error(f"Failed to download photo data from {photo_url}")
+        except Exception as e:
+            self._logger.error(f"Error updating chat photo: {str(e)}")
+            await self._session.rollback()
+
+    async def _get_or_create_chat(
+        self,
+        workspace_id: UUID,
+        telegram_id: int,
+        username: str = None,
+        photo_url: str = None
+    ) -> Chat:
         """Get existing chat or create new one"""
         result = await self._session.execute(
             select(Chat).where(
@@ -33,7 +76,11 @@ class MessageProcessor:
             )
             self._session.add(chat)
             await self._session.flush()
-            logger.info(f"Created new chat: {chat.id} for telegram_id: {telegram_id}")
+            self._logger.info(f"Created new chat: {chat.id} for telegram_id: {telegram_id}")
+        
+        # Update photo if provided
+        if photo_url:
+            await self._update_chat_photo(chat.id, photo_url)
         
         return chat
 
@@ -78,20 +125,20 @@ class MessageProcessor:
             # Import here to avoid circular imports
             from src.chat_system.telegram.manager import telegram_manager
             
-            logger.info(f"Processing message from chat {message.chat.id} in workspace {workspace_id}")
+            self._logger.info(f"Processing message from chat {message.chat.id} in workspace {workspace_id}")
             
             # Get or create chat
             chat = await self._get_or_create_chat(workspace_id, message.chat.id, message.chat.username)
             
             # Get user photo if available
             try:
-                logger.info(f"Getting photos for user {message.from_user.id}")
+                self._logger.info(f"Getting photos for user {message.from_user.id}")
                 photos = await message.from_user.get_profile_photos()
                 if photos and photos.total_count > 0:
-                    logger.info(f"Found {photos.total_count} photos")
+                    self._logger.info(f"Found {photos.total_count} photos")
                     photo = photos.photos[0][-1]  # Get the last (smallest) size of the first photo
                     file = await photo.get_file()
-                    logger.info(f"Raw file path from Telegram: {file.file_path}")
+                    self._logger.info(f"Raw file path from Telegram: {file.file_path}")
                     
                     # Get bot info to get token
                     bot_info = await telegram_manager.get_bot_info(workspace_id)
@@ -105,20 +152,14 @@ class MessageProcessor:
                     
                     # Generate clean photo URL
                     photo_url = f"https://api.telegram.org/file/bot{bot_info['token']}/photos/{file_path}"
-                    logger.info(f"Generated photo URL: {photo_url}")
+                    self._logger.info(f"Generated photo URL: {photo_url}")
                     
-                    # Update chat with photo URL and commit immediately
-                    await self._session.execute(
-                        update(Chat)
-                        .where(Chat.id == chat.id)
-                        .values(photo_url=photo_url)
-                    )
-                    await self._session.commit()
-                    logger.info(f"Updated chat photo URL: {photo_url}")
+                    # Update chat with photo
+                    await self._update_chat_photo(chat.id, photo_url)
                 else:
-                    logger.info("No photos found for user")
+                    self._logger.info("No photos found for user")
             except Exception as e:
-                logger.error(f"Failed to get user photo: {str(e)}", exc_info=True)
+                self._logger.error(f"Failed to get user photo: {str(e)}", exc_info=True)
             
             # Save message
             await self._save_message(
@@ -128,10 +169,10 @@ class MessageProcessor:
             )
             
             await self._session.commit()
-            logger.info(f"Successfully saved message to chat {chat.id}")
+            self._logger.info(f"Successfully saved message to chat {chat.id}")
             
         except Exception as e:
-            logger.error(f"Error processing message: {str(e)}")
+            self._logger.error(f"Error processing message: {str(e)}")
             raise
 
     async def process_outgoing_message(

@@ -241,12 +241,12 @@ async def get_chats(
     chats = result.unique().scalars().all()
     logger.info(f"Found {len(chats)} chats")
     
-    # Convert to list of dictionaries
+    # Convert to ChatResponse objects using from_orm
     chat_list = []
     for chat in chats:
-        chat_dict = chat.to_dict()
-        logger.info(f"Chat {chat.id} photo_url: {chat_dict['photo_url']}")
-        chat_list.append(chat_dict)
+        chat_response = ChatResponse.from_orm(chat)
+        logger.info(f"Chat {chat.id} photo_url: {chat.photo_url}, has photo_data: {bool(chat.photo_data)}")
+        chat_list.append(chat_response)
     
     return chat_list
 

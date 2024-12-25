@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, List
 from uuid import UUID
+import base64
 
 from pydantic import BaseModel, EmailStr
 
@@ -80,7 +81,8 @@ class ChatBase(BaseModel):
     telegram_id: int
     username: str
     last_message_at: Optional[datetime] = None
-    photos: Optional[UserPhotos] = None
+    photo_data: Optional[str] = None  # Base64 encoded photo data
+    photo_url: Optional[str] = None  # Deprecated, kept for backward compatibility
 
 class ChatCreate(ChatBase):
     workspace_id: UUID
@@ -95,6 +97,32 @@ class ChatResponse(ChatBase):
 
     class Config:
         from_attributes = True
+        
+    @classmethod
+    def from_orm(cls, obj):
+        # Convert photo_data bytes to base64 string if present
+        if hasattr(obj, 'photo_data') and obj.photo_data:
+            # Create a copy of the object to avoid modifying the original
+            obj_dict = {
+                'id': obj.id,
+                'workspace_id': obj.workspace_id,
+                'telegram_id': obj.telegram_id,
+                'username': obj.username,
+                'last_message_at': obj.last_message_at,
+                'photo_url': obj.photo_url,
+                'photo_data': base64.b64encode(obj.photo_data).decode('utf-8'),
+                'last_message': None
+            }
+            # Add last_message if it exists
+            if hasattr(obj, 'last_message') and obj.last_message:
+                obj_dict['last_message'] = {
+                    'id': obj.last_message.id,
+                    'content': obj.last_message.content,
+                    'direction': obj.last_message.direction,
+                    'sent_at': obj.last_message.sent_at
+                }
+            return cls(**obj_dict)
+        return super().from_orm(obj)
 
 class MessageBase(BaseModel):
     content: str
