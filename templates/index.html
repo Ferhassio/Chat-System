@@ -348,7 +348,7 @@
             const email = document.getElementById('userEmail').value;
             
             if (!workspaceId || !email) {
-                showError('Пожалуйста, заполните все поля');
+                showError('Пожалуйста, заполните в��е поля');
                 return;
             }
             
@@ -452,8 +452,8 @@
             
             chatList.innerHTML = chats.map(chat => `
                 <a href="#" class="list-group-item list-group-item-action chat-item" data-id="${chat.id}" data-workspace-id="${workspaceId}">
-                    ${chat.photo_url ? 
-                        `<img src="${chat.photo_url}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class=\'chat-avatar\'><span class=\'chat-avatar-icon\'></span></div>')">` :
+                    ${chat.photo_data ? 
+                        `<img src="data:image/jpeg;base64,${chat.photo_data}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class=\'chat-avatar\'><span class=\'chat-avatar-icon\'></span></div>')">` :
                         `<div class="chat-avatar"><span class="chat-avatar-icon"></span></div>`
                     }
                     <div class="chat-info">
@@ -898,8 +898,8 @@
         function renderChat(chat) {
             return `
                 <div class="chat-item" data-chat-id="${chat.id}">
-                    ${chat.photo_url ? 
-                        `<img src="${chat.photo_url}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class=\'chat-avatar\'><span class=\'chat-avatar-icon\'></span></div>')">` :
+                    ${chat.photo_data ? 
+                        `<img src="data:image/jpeg;base64,${chat.photo_data}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class=\'chat-avatar\'><span class=\'chat-avatar-icon\'></span></div>')">` :
                         `<div class="chat-avatar"><span class="chat-avatar-icon"></span></div>`
                     }
                     <div class="chat-info">

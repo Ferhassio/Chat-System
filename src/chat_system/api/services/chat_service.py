@@ -17,7 +17,16 @@ class ChatService:
         query = select(Chat).where(Chat.id == chat_id)
         result = await self.session.execute(query)
         chat = result.scalar_one_or_none()
-        return chat.to_dict() if chat else None
+        if not chat:
+            return None
+            
+        chat_dict = chat.to_dict()
+        if chat.photo_data:
+            # Cache photo separately with longer TTL
+            photo_cache_key = f"chat:photo:{chat_id}"
+            await cache.set(photo_cache_key, chat.photo_data, ttl=settings.TELEGRAM_PHOTO_TTL)
+            
+        return chat_dict
     
     @cached("chat:messages", ttl=settings.CACHE_MESSAGE_TTL)
     async def get_chat_messages(
@@ -45,7 +54,15 @@ class ChatService:
         ).where(User.id == user_id)
         result = await self.session.execute(query)
         chats = result.scalars().all()
-        return [chat.to_dict() for chat in chats]
+        chat_list = []
+        for chat in chats:
+            chat_dict = chat.to_dict()
+            if chat.photo_data:
+                # Cache photo separately with longer TTL
+                photo_cache_key = f"chat:photo:{chat.id}"
+                await cache.set(photo_cache_key, chat.photo_data, ttl=settings.TELEGRAM_PHOTO_TTL)
+            chat_list.append(chat_dict)
+        return chat_list
     
     async def add_message(self, chat_id: int, user_id: int, content: str) -> dict:
         """Add new message and invalidate relevant caches"""
@@ -99,4 +116,17 @@ class ChatService:
         # Инвалидируем кэш непрочитанных сообщений
         await cache.delete(f"chat:unread:{chat_id}:{user_id}")
         # Инвалидируем кэш сообщений чата
-        await cache.delete(f"chat:messages:{chat_id}") 
+        await cache.delete(f"chat:messages:{chat_id}")
+        
+    async def update_chat_photo(self, chat_id: int, photo_data: bytes) -> None:
+        """Update chat photo and invalidate cache"""
+        chat = await self.session.get(Chat, chat_id)
+        if chat:
+            chat.photo_data = photo_data
+            await self.session.commit()
+            
+            # Инвалидируем кэш чата
+            await cache.delete(f"chat:{chat_id}")
+            # Отдельно кэшируем фото с большим TTL
+            photo_cache_key = f"chat:photo:{chat_id}"
+            await cache.set(photo_cache_key, photo_data, ttl=settings.TELEGRAM_PHOTO_TTL) 

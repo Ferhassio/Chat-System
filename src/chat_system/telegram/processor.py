@@ -11,6 +11,7 @@ from sqlalchemy.sql import func
 
 from src.chat_system.db.models import Chat, Message
 from src.chat_system.db.enums import MessageDirection
+from src.chat_system.api.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 
@@ -30,27 +31,21 @@ class MessageProcessor:
             self._logger.error(f"Failed to download photo: {str(e)}")
         return None
 
-    async def _update_chat_photo(self, chat_id: UUID, photo_url: str) -> None:
-        """Update chat's photo data"""
+    async def _update_chat_photo(self, chat: Chat, photo_url: Optional[str]) -> None:
+        """Update chat photo if needed"""
+        if not photo_url:
+            return
+            
         try:
             photo_data = await self._get_photo_data(photo_url)
             if photo_data:
-                await self._session.execute(
-                    update(Chat)
-                    .where(Chat.id == chat_id)
-                    .values(
-                        photo_url=photo_url,
-                        photo_data=photo_data,
-                        updated_at=func.now()
-                    )
-                )
-                await self._session.commit()
-                self._logger.info(f"Updated chat photo data for chat {chat_id}")
-            else:
-                self._logger.error(f"Failed to download photo data from {photo_url}")
+                # Use chat service to update photo with proper caching
+                chat_service = ChatService(self._session)
+                await chat_service.update_chat_photo(chat.id, photo_data)
+                logger.info(f"Updated photo for chat {chat.id}")
         except Exception as e:
-            self._logger.error(f"Error updating chat photo: {str(e)}")
-            await self._session.rollback()
+            logger.error(f"Failed to update chat photo: {e}")
+            # Don't raise the error to avoid breaking the main flow
 
     async def _get_or_create_chat(
         self,
@@ -80,7 +75,7 @@ class MessageProcessor:
         
         # Update photo if provided
         if photo_url:
-            await self._update_chat_photo(chat.id, photo_url)
+            await self._update_chat_photo(chat, photo_url)
         
         return chat
 
@@ -155,7 +150,7 @@ class MessageProcessor:
                     self._logger.info(f"Generated photo URL: {photo_url}")
                     
                     # Update chat with photo
-                    await self._update_chat_photo(chat.id, photo_url)
+                    await self._update_chat_photo(chat, photo_url)
                 else:
                     self._logger.info("No photos found for user")
             except Exception as e:
