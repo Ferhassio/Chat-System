@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict, List
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr
@@ -9,9 +9,15 @@ class MessageDirection(str, Enum):
     INCOMING = "incoming"
     OUTGOING = "outgoing"
 
+class UserPhotos(BaseModel):
+    small: str
+    medium: str
+    large: str
+
 class UserBase(BaseModel):
     email: EmailStr
     full_name: str
+    photos: Optional[UserPhotos] = None
 
 class UserCreate(UserBase):
     password: str
@@ -20,9 +26,15 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UserUpdate(UserBase):
+    password: Optional[str] = None
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+
 class UserResponse(UserBase):
     id: UUID
-    is_owner: Optional[bool] = False
+    is_active: bool
+    is_owner: bool = False
 
     class Config:
         from_attributes = True
@@ -67,11 +79,19 @@ class BotResponse(BotBase):
 class ChatBase(BaseModel):
     telegram_id: int
     username: str
+    last_message_at: Optional[datetime] = None
+    photos: Optional[UserPhotos] = None
+
+class ChatCreate(ChatBase):
+    workspace_id: UUID
+
+class ChatUpdate(ChatBase):
+    pass
 
 class ChatResponse(ChatBase):
     id: UUID
     workspace_id: UUID
-    last_message_at: Optional[datetime] = None
+    last_message: Optional[Dict] = None
 
     class Config:
         from_attributes = True

@@ -25,6 +25,29 @@ from src.chat_system.telegram.manager import telegram_manager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+async def get_workspace_or_404(session: AsyncSession, workspace_id: UUID, current_user: User) -> Workspace:
+    """Get workspace by id or raise 404 if not found or no access"""
+    workspace_access = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+        ).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
+    )
+    
+    workspace = workspace_access.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(
+            status_code=404, 
+            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
+        )
+    return workspace
+
 @router.post("/", response_model=WorkspaceResponse)
 async def create_workspace(
     workspace: WorkspaceCreate,
@@ -86,7 +109,7 @@ async def add_bot(
         if existing_bot:
             raise HTTPException(
                 status_code=400, 
-                detail="Бот с таким токеном уже зарегистрирован в другом рабочем пространстве. Пожалуйста, испол��зуйте другой токен бота."
+                detail="Бот с таким токеном уже зарегистрирован в другом рабочем пространстве. Пожалуйста, используйте другой токен бота."
             )
 
         # Initialize bot first to validate token
@@ -105,7 +128,7 @@ async def add_bot(
         # Get existing chats and messages for this bot
         bot_info = await telegram_manager.get_bot_info(workspace_id)
         if bot_info:
-            logger.info(f"Got bot info: {bot_info.id} ({bot_info.username})")
+            logger.info(f"Got bot info: {bot_info['id']}")
             
             # Get all chats for this bot
             chats = await telegram_manager.get_bot_chats(workspace_id)
@@ -133,7 +156,7 @@ async def add_bot(
                     logger.info(f"Created new chat record: {db_chat.id}")
                 else:
                     logger.info(f"Using existing chat record: {db_chat.id}")
-                
+
                 # Get chat history
                 messages = await telegram_manager.get_chat_history(workspace_id, chat.id)
                 logger.info(f"Got {len(messages)} messages from history")
@@ -152,11 +175,14 @@ async def add_bot(
                     if result.scalar_one_or_none():
                         continue
                     
+                    # Determine message direction based on sender
+                    is_outgoing = msg.from_user and msg.from_user.is_bot
+                    
                     db_message = Message(
                         chat_id=db_chat.id,
                         content=msg.text,
                         sent_at=msg.date.replace(tzinfo=None),  # Remove timezone info
-                        direction=MessageDirection.INCOMING if msg.from_user.id != bot_info.id else MessageDirection.OUTGOING,
+                        direction=MessageDirection.OUTGOING if is_outgoing else MessageDirection.INCOMING,
                     )
                     session.add(db_message)
                     logger.info(f"Added message: {msg.text[:50]}...")
@@ -198,36 +224,31 @@ async def get_chats(
     workspace_id: UUID,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> List[Chat]:
+) -> List[ChatResponse]:
     """Get all chats in workspace"""
-    # Check if user has access to workspace (either owner or member)
-    workspace_access = await session.execute(
-        select(Workspace).where(
-            Workspace.id == workspace_id,
-        ).where(
-            (Workspace.owner_id == current_user.id) | 
-            (Workspace.id.in_(
-                select(WorkspaceUser.workspace_id).where(
-                    WorkspaceUser.user_id == current_user.id
-                )
-            ))
-        )
-    )
+    # Check workspace access
+    workspace = await get_workspace_or_404(session, workspace_id, current_user)
     
-    workspace = workspace_access.scalar_one_or_none()
-    if not workspace:
-        raise HTTPException(
-            status_code=404, 
-            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
-        )
-
-    # Get all chats for the workspace
+    # Get chats with telegram profiles and last messages
     result = await session.execute(
         select(Chat)
+        .options(
+            joinedload(Chat.last_message)
+        )
         .where(Chat.workspace_id == workspace_id)
         .order_by(Chat.last_message_at.desc())
     )
-    return result.scalars().all()
+    chats = result.unique().scalars().all()
+    logger.info(f"Found {len(chats)} chats")
+    
+    # Convert to list of dictionaries
+    chat_list = []
+    for chat in chats:
+        chat_dict = chat.to_dict()
+        logger.info(f"Chat {chat.id} photo_url: {chat_dict['photo_url']}")
+        chat_list.append(chat_dict)
+    
+    return chat_list
 
 @router.get("/{workspace_id}/chats/{chat_id}/messages", response_model=List[MessageResponse])
 async def get_messages(

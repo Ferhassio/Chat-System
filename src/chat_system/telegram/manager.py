@@ -7,6 +7,7 @@ from sqlalchemy import select
 from uuid import UUID
 import logging
 import asyncio
+from typing import Dict, Any, Optional
 
 from src.chat_system.core.config import settings
 from src.chat_system.telegram.processor import MessageProcessor
@@ -190,14 +191,22 @@ class TelegramManager:
                         await session.rollback()
                         await asyncio.sleep(1)  # Wait before retry
 
-    async def get_bot_info(self, workspace_id: UUID):
-        """Get bot information"""
+    async def get_bot_info(self, workspace_id: UUID) -> Optional[Dict[str, Any]]:
+        """Get bot info by workspace id"""
         try:
-            application = self._bots.get(workspace_id)
-            if not application:
+            async with self._session_factory() as session:
+                result = await session.execute(
+                    select(Bot).where(Bot.workspace_id == workspace_id)
+                )
+                bot = result.scalar_one_or_none()
+                if bot:
+                    return {
+                        'id': bot.id,
+                        'token': bot.token,
+                        'name': bot.name,
+                        'workspace_id': workspace_id
+                    }
                 return None
-            
-            return await application.bot.get_me()
         except Exception as e:
             logger.error(f"Failed to get bot info: {str(e)}", exc_info=True)
             return None

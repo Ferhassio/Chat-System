@@ -20,8 +20,11 @@ class Database:
         self._engine: AsyncEngine = create_async_engine(
             settings.DATABASE_URL,
             echo=settings.DEBUG,
-            pool_size=20,
-            max_overflow=10,
+            pool_size=100,
+            max_overflow=30,
+            pool_timeout=30,
+            pool_pre_ping=True,
+            pool_recycle=3600,
         )
         self._async_session_maker = async_sessionmaker(
             self._engine,
