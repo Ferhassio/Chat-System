@@ -354,6 +354,7 @@
         // Global variables
         let currentWorkspaceId = null;
         let currentChatId = null;
+        let currentBotId = null;
         const accessToken = localStorage.getItem('accessToken');
 
         // Check authentication
@@ -371,17 +372,18 @@
             const messageInput = document.getElementById('messageInput');
             const text = messageInput.value.trim();
             
-            if (!text || !currentWorkspaceId || !currentChatId) {
+            if (!text || !currentWorkspaceId || !currentChatId || !currentBotId) {
                 console.log('Missing required data:', {
                     hasText: !!text,
                     hasWorkspace: !!currentWorkspaceId,
-                    hasChat: !!currentChatId
+                    hasChat: !!currentChatId,
+                    hasBot: !!currentBotId
                 });
                 return;
             }
             
             try {
-                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/messages`, {
+                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
@@ -417,11 +419,10 @@
                     window.location.replace('/auth');
                 } else {
                     const data = await response.json();
-                    showError(data.detail || 'Failed to send message');
+                    console.error('Error sending message:', data);
                 }
             } catch (error) {
                 console.error('Error sending message:', error);
-                showError('An error occurred while sending the message');
             }
         }
 
@@ -532,6 +533,52 @@
             });
         }
 
+        let chatUpdateInterval;
+
+        function startChatUpdates(workspaceId) {
+            stopChatUpdates();
+            chatUpdateInterval = setInterval(() => updateChats(workspaceId), 3000);
+        }
+
+        function stopChatUpdates() {
+            if (chatUpdateInterval) {
+                clearInterval(chatUpdateInterval);
+                chatUpdateInterval = null;
+            }
+        }
+
+        async function updateChats(workspaceId) {
+            if (!workspaceId) return;
+            
+            try {
+                const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                
+                if (response.ok) {
+                    const newChats = await response.json();
+                    
+                    // Compare with existing chats
+                    const currentChats = window.chats || [];
+                    const hasNewChats = newChats.length > currentChats.length;
+                    const hasUpdates = newChats.some((chat, index) => {
+                        const currentChat = currentChats[index];
+                        return !currentChat || 
+                            chat.has_unread !== currentChat.has_unread ||
+                            chat.last_message?.content !== currentChat.last_message?.content;
+                    });
+                    
+                    if (hasNewChats || hasUpdates) {
+                        window.chats = newChats;
+                        displayChats(newChats);
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating chats:', error);
+            }
+        }
+
+        // Update loadChats function to start chat updates
         async function loadChats(workspaceId) {
             const chatList = document.getElementById('chatList');
             chatList.innerHTML = '<div class="loading-spinner">Loading chats...</div>';
@@ -542,27 +589,22 @@
                 });
                 if (response.ok) {
                     const chats = await response.json();
-                    
-                    // Store chats globally for reference
                     window.chats = chats;
-                    
-                    // Update current workspace ID
                     currentWorkspaceId = workspaceId;
                     
-                    // If there are chats but none is selected, select the most recent one
                     if (chats.length > 0 && !currentChatId) {
                         currentChatId = chats[0].id;
                         document.getElementById('chatTitle').textContent = `Chat with @${chats[0].username} (${chats[0].bot?.name || 'Unknown bot'})`;
                         loadMessages(workspaceId, currentChatId);
                     } else if (chats.length === 0) {
-                        // If no chats available, clear the chat window
                         chatList.innerHTML = '<div class="loading-text">No chats available</div>';
                         document.getElementById('messageList').innerHTML = '';
                         document.getElementById('chatTitle').textContent = 'No chats available';
                         return;
                     }
                     
-                    displayChats(chats, workspaceId);
+                    displayChats(chats);
+                    startChatUpdates(workspaceId); // Start chat updates
                 } else if (response.status === 401) {
                     localStorage.removeItem('accessToken');
                     window.location.replace('/auth');
@@ -624,6 +666,7 @@
                 chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
                 chatDiv.dataset.chatId = chat.id;
                 chatDiv.dataset.workspaceId = chat.workspace_id;
+                chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
                 
                 let lastMessageText = 'No messages';
                 if (chat.last_message) {
@@ -649,6 +692,12 @@
                 `;
                 
                 chatDiv.addEventListener('click', async () => {
+                    console.log('Chat clicked:', {
+                        workspaceId: chat.workspace_id,
+                        chatId: chat.id,
+                        botId: chat.bot_id
+                    });
+
                     // Remove active class from all chats
                     document.querySelectorAll('.chat-item').forEach(item => {
                         item.classList.remove('active');
@@ -657,15 +706,19 @@
                     // Add active class to clicked chat
                     chatDiv.classList.add('active');
                     
-                    // Update current chat and workspace IDs
+                    // Update current chat, workspace, and bot IDs
                     currentChatId = chat.id;
                     currentWorkspaceId = chat.workspace_id;
+                    currentBotId = chat.bot_id;  // Ensure bot_id is assigned
                     
                     // Update chat title with bot name
                     document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
                     
                     // Show loading animation for messages
                     document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
+                    
+                    // Fetch messages for the selected chat
+                    await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
                     
                     // Mark as read
                     if (chat.has_unread) {
@@ -685,9 +738,6 @@
                             console.error('Error marking chat as read:', error);
                         }
                     }
-                    
-                    // Load messages with explicit IDs
-                    await loadMessages(currentWorkspaceId, currentChatId);
                 });
                 
                 chatList.appendChild(chatDiv);
@@ -698,11 +748,11 @@
         let messageUpdateInterval;
         let currentLoadingChatId = null;
 
-        async function loadMessages(workspaceId, chatId) {
+        async function loadMessages(workspaceId, chatId, botId) {
             // Validate IDs before making request
-            if (!workspaceId || !chatId) {
-                console.log('Invalid workspace or chat ID:', { workspaceId, chatId });
-                document.getElementById('messageList').innerHTML = '<div class="loading-text">Please select a chat</div>';
+            if (!workspaceId || !chatId || !botId) {
+                console.log('Invalid workspace, chat, or bot ID:', { workspaceId, chatId, botId });
+                document.getElementById('messageList').innerHTML = '<div class="loading-text">Please select a chat"</div>';
                 return;
             }
             
@@ -719,7 +769,7 @@
                 isLoadingMessages = true;
                 currentLoadingChatId = chatId;
                 
-                const response = await fetch(`/api/workspaces/${workspaceId}/chats/${chatId}/messages`, {
+                const response = await fetch(`/api/workspaces/${workspaceId}/chats/${chatId}/bots/${botId}/messages`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
                 
@@ -782,7 +832,7 @@
             
             try {
                 isLoadingMessages = true;
-                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/messages`, {
+                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
                 
@@ -865,6 +915,7 @@
         // Clean up on page unload
         window.addEventListener('beforeunload', () => {
             stopMessageUpdates();
+            stopChatUpdates();
         });
 
         async function createWorkspace() {
@@ -1106,7 +1157,10 @@
                         `<div class="chat-avatar"><span class="chat-avatar-icon"></span></div>`
                     }
                     <div class="chat-info">
-                        <div class="chat-name">@${chat.username}</div>
+                        <div class="chat-name">
+                            @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                            ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
+                        </div>
                         <div class="chat-last-message">${chat.last_message?.content || 'No messages yet'}</div>
                     </div>
                 </div>
@@ -1142,6 +1196,7 @@
                 chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
                 chatDiv.dataset.chatId = chat.id;
                 chatDiv.dataset.workspaceId = chat.workspace_id;
+                chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
                 
                 let lastMessageText = 'No messages';
                 if (chat.last_message) {
@@ -1167,6 +1222,12 @@
                 `;
                 
                 chatDiv.addEventListener('click', async () => {
+                    console.log('Chat clicked:', {
+                        workspaceId: chat.workspace_id,
+                        chatId: chat.id,
+                        botId: chat.bot_id
+                    });
+
                     // Remove active class from all chats
                     document.querySelectorAll('.chat-item').forEach(item => {
                         item.classList.remove('active');
@@ -1175,15 +1236,19 @@
                     // Add active class to clicked chat
                     chatDiv.classList.add('active');
                     
-                    // Update current chat and workspace IDs
+                    // Update current chat, workspace, and bot IDs
                     currentChatId = chat.id;
                     currentWorkspaceId = chat.workspace_id;
+                    currentBotId = chat.bot_id;  // Ensure bot_id is assigned
                     
                     // Update chat title with bot name
                     document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
                     
                     // Show loading animation for messages
                     document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
+                    
+                    // Fetch messages for the selected chat
+                    await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
                     
                     // Mark as read
                     if (chat.has_unread) {
@@ -1203,9 +1268,6 @@
                             console.error('Error marking chat as read:', error);
                         }
                     }
-                    
-                    // Load messages with explicit IDs
-                    await loadMessages(currentWorkspaceId, currentChatId);
                 });
                 
                 chatList.appendChild(chatDiv);
@@ -1233,6 +1295,32 @@
             }
         `;
         document.head.appendChild(style);
+
+        // Stop chat updates when switching workspaces
+        document.getElementById('workspaceDropdown').addEventListener('change', (e) => {
+            stopChatUpdates();
+            const selectedWorkspaceId = e.target.value;
+            loadChats(selectedWorkspaceId);
+        });
+
+        function renderChatList(chats) {
+            const chatList = document.getElementById('chatList');
+            chatList.innerHTML = '';
+            chats.forEach(chat => {
+                const chatItem = document.createElement('div');
+                chatItem.className = 'chat-item';
+                chatItem.innerHTML = `
+                    <div class="chat-avatar">
+                        <span class="chat-avatar-icon"></span>
+                    </div>
+                    <div class="chat-info">
+                        <div class="chat-name">${chat.username} (${chat.bot_id || 'Unknown bot'})</div>
+                        <div class="chat-last-message">${chat.last_message || 'No messages yet'}</div>
+                    </div>
+                `;
+                chatList.appendChild(chatItem);
+            });
+        }
     </script>
 </body>
 </html>

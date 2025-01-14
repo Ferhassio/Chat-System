@@ -259,14 +259,15 @@ async def get_chats(
     
     return chat_list
 
-@router.get("/{workspace_id}/chats/{chat_id}/messages", response_model=List[MessageResponse])
+@router.get("/{workspace_id}/chats/{chat_id}/bots/{bot_id}/messages", response_model=List[MessageResponse])
 async def get_messages(
     workspace_id: UUID,
     chat_id: UUID,
+    bot_id: UUID,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> List[Message]:
-    """Get all messages in chat"""
+    """Get all messages in chat for a specific bot"""
     # Check if user has access to workspace (either owner or member)
     workspace_access = await session.execute(
         select(Workspace).where(
@@ -288,27 +289,29 @@ async def get_messages(
             detail="Рабочее пространство не найдено или у вас нет к нему доступа"
         )
 
-    # Get all messages for the chat
+    # Get all messages for the chat and bot
     result = await session.execute(
         select(Message)
         .join(Chat, Message.chat_id == Chat.id)
         .where(
             Message.chat_id == chat_id,
             Chat.workspace_id == workspace_id,
+            Chat.bot_id == bot_id,
         )
         .order_by(Message.sent_at.asc())
     )
     return result.scalars().all()
 
-@router.post("/{workspace_id}/chats/{chat_id}/messages", response_model=MessageResponse)
+@router.post("/{workspace_id}/chats/{chat_id}/bots/{bot_id}/messages", response_model=MessageResponse)
 async def send_message(
     workspace_id: UUID,
     chat_id: UUID,
+    bot_id: UUID,
     message: MessageCreate,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Message:
-    """Send message to chat"""
+    """Send message to chat using a specific bot"""
     # Check if user has access to workspace (either owner or member)
     workspace_access = await session.execute(
         select(Workspace).where(
@@ -335,6 +338,7 @@ async def send_message(
         select(Chat).where(
             Chat.id == chat_id,
             Chat.workspace_id == workspace_id,
+            Chat.bot_id == bot_id  # Ensure the chat is associated with the correct bot
         )
     )
     chat = result.scalar_one_or_none()
@@ -345,6 +349,7 @@ async def send_message(
     success = await telegram_manager.send_message(
         workspace_id=workspace_id,
         chat_id=chat.telegram_id,
+        bot_id=bot_id,
         text=message.content,
     )
     if not success:

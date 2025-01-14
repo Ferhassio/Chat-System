@@ -168,7 +168,7 @@ class TelegramManager:
         for (workspace_id, bot_id) in list(self._bots.keys()):
             await self.cleanup_bot(workspace_id, bot_id)
 
-    async def send_message(self, workspace_id: UUID, chat_id: int, text: str) -> bool:
+    async def send_message(self, workspace_id: UUID, chat_id: int, bot_id: UUID, text: str) -> bool:
         """Send message to a chat"""
         if not text or not text.strip():
             logger.error("Empty message text")
@@ -177,35 +177,19 @@ class TelegramManager:
         try:
             # Find the correct bot for this chat
             async with self._session_factory() as session:
-                logger.info(f"Looking for chat: workspace_id={workspace_id}, telegram_id={chat_id}")
+                logger.info(f"Looking for chat: workspace_id={workspace_id}, telegram_id={chat_id}, bot_id={bot_id}")
                 
-                # First get all active bots for this workspace
+                # Get the specific chat
                 result = await session.execute(
-                    select(Bot).where(
-                        Bot.workspace_id == workspace_id,
-                        Bot.is_active == True
+                    select(Chat).where(
+                        Chat.workspace_id == workspace_id,
+                        Chat.telegram_id == chat_id,
+                        Chat.bot_id == bot_id
                     )
                 )
-                bots = result.scalars().all()
-                
-                # Try each bot until we find the right chat
-                chat = None
-                bot_id = None
-                for bot in bots:
-                    result = await session.execute(
-                        select(Chat).where(
-                            Chat.workspace_id == workspace_id,
-                            Chat.telegram_id == chat_id,
-                            Chat.bot_id == bot.id
-                        )
-                    )
-                    chat = result.scalar_one_or_none()
-                    if chat:
-                        bot_id = bot.id
-                        break
-                
+                chat = result.scalar_one_or_none()
                 if not chat:
-                    logger.error(f"Chat not found: workspace_id={workspace_id}, telegram_id={chat_id}")
+                    logger.error(f"Chat not found: workspace_id={workspace_id}, telegram_id={chat_id}, bot_id={bot_id}")
                     return False
                 
                 key = (workspace_id, bot_id)
