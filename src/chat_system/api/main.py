@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,8 +20,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    logger.info("Starting up application...")
+    
+    # Create database tables
+    async with engine.begin() as conn:
+        logger.info("Creating database tables...")
+        await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables created successfully")
+
+    # Initialize bots on startup
+    await telegram_manager.initialize_from_db()
+    
+    yield
+    
+    # Cleanup on shutdown
+    logger.info("Shutting down application...")
+    await telegram_manager.cleanup()
+
 # Create FastAPI application
-app = FastAPI(title="Chat System")
+app = FastAPI(title="Chat System", lifespan=lifespan)
 
 # Configure CORS
 app.add_middleware(
@@ -40,24 +61,4 @@ templates = Jinja2Templates(directory=TEMPLATES_DIR)
 # Include routers
 app.include_router(pages.router, tags=["pages"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"])
-
-@app.on_event("startup")
-async def startup_event():
-    """Startup event handler"""
-    logger.info("Starting up application...")
-    
-    # Create database tables
-    async with engine.begin() as conn:
-        logger.info("Creating database tables...")
-        await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables created successfully")
-
-    # Initialize bots on startup
-    await telegram_manager.initialize_from_db()
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Shutdown event handler"""
-    logger.info("Shutting down application...")
-    await telegram_manager.cleanup() 
+app.include_router(workspaces.router, prefix="/api/workspaces", tags=["workspaces"]) 
