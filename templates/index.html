@@ -344,6 +344,65 @@
         const addBotModal = new bootstrap.Modal('#addBotModal');
         const manageUsersModal = new bootstrap.Modal('#manageUsersModal');
 
+        // Message sending function
+        async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const text = messageInput.value.trim();
+            
+            if (!text || !currentWorkspaceId || !currentChatId) {
+                console.log('Missing required data:', {
+                    hasText: !!text,
+                    hasWorkspace: !!currentWorkspaceId,
+                    hasChat: !!currentChatId
+                });
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${accessToken}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ content: text })
+                });
+                
+                if (response.ok) {
+                    // Clear input immediately
+                    messageInput.value = '';
+                    
+                    // Add the sent message to the UI
+                    const message = await response.json();
+                    const messageList = document.getElementById('messageList');
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message message-outgoing';
+                    messageDiv.dataset.chatId = currentChatId;
+                    messageDiv.dataset.workspaceId = currentWorkspaceId;
+                    messageDiv.innerHTML = `
+                        <div class="message-content">
+                            <div class="message-text">${message.content}</div>
+                            <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
+                        </div>
+                    `;
+                    messageList.appendChild(messageDiv);
+                    messageList.scrollTop = messageList.scrollHeight;
+                    
+                    // Force update messages to get the latest state
+                    await updateMessages();
+                } else if (response.status === 401) {
+                    localStorage.removeItem('accessToken');
+                    window.location.replace('/auth');
+                } else {
+                    const data = await response.json();
+                    showError(data.detail || 'Failed to send message');
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                showError('An error occurred while sending the message');
+            }
+        }
+
         // Event listeners
         document.getElementById('createWorkspaceBtn').addEventListener('click', () => createWorkspaceModal.show());
         document.getElementById('addBotBtn').addEventListener('click', () => {
@@ -361,13 +420,29 @@
             }
             await addBot(workspaceId);
         });
-        document.getElementById('sendMessageBtn').addEventListener('click', sendMessage);
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+
+        // Message sending event listeners
+        const sendMessageBtn = document.getElementById('sendMessageBtn');
+        const messageInput = document.getElementById('messageInput');
+
+        if (sendMessageBtn) {
+            sendMessageBtn.addEventListener('click', (e) => {
                 e.preventDefault();
+                console.log('Send button clicked');
                 sendMessage();
-            }
-        });
+            });
+        }
+
+        if (messageInput) {
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    console.log('Enter key pressed');
+                    sendMessage();
+                }
+            });
+        }
+
         document.getElementById('manageUsersBtn').addEventListener('click', () => {
             loadWorkspacesForUserModal();
             manageUsersModal.show();
@@ -448,6 +523,9 @@
                     
                     // Store chats globally for reference
                     window.chats = chats;
+                    
+                    // Update current workspace ID
+                    currentWorkspaceId = workspaceId;
                     
                     // If there are chats but none is selected, select the most recent one
                     if (chats.length > 0 && !currentChatId) {
@@ -541,6 +619,12 @@
                 item.addEventListener('click', async () => {
                     if (currentChatId === chat.id) return;
                     
+                    console.log('Switching to chat:', {
+                        workspaceId,
+                        chatId: chat.id,
+                        username: chat.username
+                    });
+                    
                     // Update UI immediately
                     document.querySelectorAll('.chat-item').forEach(i => i.classList.remove('active'));
                     item.classList.add('active');
@@ -553,6 +637,11 @@
                     // Update state
                     currentWorkspaceId = workspaceId;
                     currentChatId = chat.id;
+                    
+                    console.log('Updated state:', {
+                        currentWorkspaceId,
+                        currentChatId
+                    });
                     
                     // Load messages
                     await loadMessages(workspaceId, chat.id);
@@ -808,51 +897,6 @@
                 
             } catch (error) {
                 console.error('Error adding bot:', error);
-            }
-        }
-
-        async function sendMessage() {
-            const text = document.getElementById('messageInput').value;
-            if (!text || !currentWorkspaceId || !currentChatId) return;
-            
-            try {
-                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ content: text })
-                });
-                
-                if (response.ok) {
-                    // Clear input immediately
-                    document.getElementById('messageInput').value = '';
-                    
-                    // Add the sent message immediately
-                    const message = await response.json();
-                    const messageList = document.getElementById('messageList');
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'message message-outgoing';
-                    messageDiv.dataset.chatId = currentChatId;  // Add chat ID to message element
-                    messageDiv.innerHTML = `
-                        <div class="message-content">
-                            <div class="message-text">${message.content}</div>
-                            <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
-                        </div>
-                    `;
-                    messageList.appendChild(messageDiv);
-                    messageList.scrollTop = messageList.scrollHeight;
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                } else {
-                    const data = await response.json();
-                    showError(data.detail || 'Не удалось отправить сообщение');
-                }
-            } catch (error) {
-                console.error('Error sending message:', error);
-                showError('Произошла ошибка при отправке сообщения');
             }
         }
 

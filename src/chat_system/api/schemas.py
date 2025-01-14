@@ -83,6 +83,7 @@ class ChatBase(BaseModel):
     last_message_at: Optional[datetime] = None
     photo_data: Optional[str] = None  # Base64 encoded photo data
     photo_url: Optional[str] = None  # Deprecated, kept for backward compatibility
+    bot_id: UUID  # Add bot_id field
 
 class ChatCreate(ChatBase):
     workspace_id: UUID
@@ -106,6 +107,7 @@ class ChatResponse(ChatBase):
             obj_dict = {
                 'id': obj.id,
                 'workspace_id': obj.workspace_id,
+                'bot_id': obj.bot_id,  # Add bot_id field
                 'telegram_id': obj.telegram_id,
                 'username': obj.username,
                 'last_message_at': obj.last_message_at,

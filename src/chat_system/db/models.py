@@ -65,6 +65,7 @@ class Bot(Base):
 
     # Relationships
     workspace: Mapped[Workspace] = relationship(back_populates="bots")
+    chats: Mapped[List["Chat"]] = relationship(back_populates="bot", cascade="all, delete-orphan")
 
 class Chat(Base):
     """Chat model"""
@@ -72,6 +73,7 @@ class Chat(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"))
+    bot_id: Mapped[UUID] = mapped_column(ForeignKey("bots.id"))
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(255))
     photo_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
@@ -82,6 +84,7 @@ class Chat(Base):
 
     # Relationships
     workspace: Mapped[Workspace] = relationship(back_populates="chats")
+    bot: Mapped[Bot] = relationship(back_populates="chats")
     messages: Mapped[List["Message"]] = relationship(
         back_populates="chat",
         cascade="all, delete-orphan",
@@ -100,6 +103,7 @@ class Chat(Base):
         result = {
             "id": str(self.id),
             "workspace_id": str(self.workspace_id),
+            "bot_id": str(self.bot_id),
             "telegram_id": self.telegram_id,
             "username": self.username,
             "photo_url": None,  # Deprecated

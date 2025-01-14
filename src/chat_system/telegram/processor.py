@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src.chat_system.db.models import Chat, Message
+from src.chat_system.db.models import Chat, Message, Bot
 from src.chat_system.db.enums import MessageDirection
 from src.chat_system.api.services.chat_service import ChatService
 
@@ -51,6 +51,7 @@ class MessageProcessor:
         self,
         workspace_id: UUID,
         telegram_id: int,
+        bot_id: UUID,
         username: str = None,
         photo_url: str = None
     ) -> Chat:
@@ -59,6 +60,7 @@ class MessageProcessor:
             select(Chat).where(
                 Chat.workspace_id == workspace_id,
                 Chat.telegram_id == telegram_id,
+                Chat.bot_id == bot_id,
             )
         )
         chat = result.scalar_one_or_none()
@@ -67,11 +69,17 @@ class MessageProcessor:
             chat = Chat(
                 workspace_id=workspace_id,
                 telegram_id=telegram_id,
+                bot_id=bot_id,
                 username=username or "",
             )
             self._session.add(chat)
             await self._session.flush()
-            self._logger.info(f"Created new chat: {chat.id} for telegram_id: {telegram_id}")
+            self._logger.info(f"Created new chat: {chat.id} for telegram_id: {telegram_id} with bot: {bot_id}")
+        elif username and chat.username != username:
+            # Update username if changed
+            chat.username = username
+            await self._session.flush()
+            self._logger.info(f"Updated username for chat {chat.id} to {username}")
         
         # Update photo if provided
         if photo_url:
@@ -81,20 +89,12 @@ class MessageProcessor:
 
     async def _save_message(self, chat_id: UUID, content: str, sent_at: datetime) -> Message:
         """Save new message"""
-        # Import here to avoid circular imports
-        from src.chat_system.telegram.manager import telegram_manager
-        
-        # Get bot info to check message ownership
-        workspace_id = None
+        # Get chat to check message ownership
         result = await self._session.execute(
-            select(Chat.workspace_id).where(Chat.id == chat_id)
+            select(Chat).where(Chat.id == chat_id)
         )
-        workspace_id = result.scalar_one()
+        chat = result.scalar_one()
         
-        bot_info = await telegram_manager.get_bot_info(workspace_id)
-        if not bot_info:
-            raise ValueError(f"Bot info not found for workspace {workspace_id}")
-
         message = Message(
             chat_id=chat_id,
             content=content,
@@ -103,10 +103,6 @@ class MessageProcessor:
         )
         
         # Update chat's last message
-        result = await self._session.execute(
-            select(Chat).where(Chat.id == chat_id)
-        )
-        chat = result.scalar_one()
         chat.last_message_at = sent_at.replace(tzinfo=None)
         
         self._session.add(message)
@@ -114,88 +110,108 @@ class MessageProcessor:
         
         return message
 
-    async def process_message(self, workspace_id: UUID, message: Message) -> None:
+    async def process_message(self, workspace_id: UUID, message: Message, bot_id: UUID) -> None:
         """Process incoming message"""
         try:
-            # Import here to avoid circular imports
-            from src.chat_system.telegram.manager import telegram_manager
-            
+            if not message or not message.chat:
+                self._logger.error("Invalid message object")
+                return
+                
             self._logger.info(f"Processing message from chat {message.chat.id} in workspace {workspace_id}")
             
             # Get or create chat
-            chat = await self._get_or_create_chat(workspace_id, message.chat.id, message.chat.username)
+            chat = await self._get_or_create_chat(
+                workspace_id=workspace_id,
+                telegram_id=message.chat.id,
+                bot_id=bot_id,
+                username=message.chat.username
+            )
             
             # Get user photo if available
             try:
-                self._logger.info(f"Getting photos for user {message.from_user.id}")
-                photos = await message.from_user.get_profile_photos()
-                if photos and photos.total_count > 0:
-                    self._logger.info(f"Found {photos.total_count} photos")
-                    photo = photos.photos[0][-1]  # Get the last (smallest) size of the first photo
-                    file = await photo.get_file()
-                    self._logger.info(f"Raw file path from Telegram: {file.file_path}")
-                    
-                    # Get bot info to get token
-                    bot_info = await telegram_manager.get_bot_info(workspace_id)
-                    if not bot_info:
-                        raise ValueError(f"Bot info not found for workspace {workspace_id}")
-                    
-                    # Extract only the file path if it's a full URL
-                    file_path = file.file_path
-                    if file_path.startswith('https://'):
-                        file_path = file_path.split('/photos/')[-1]
-                    
-                    # Generate clean photo URL
-                    photo_url = f"https://api.telegram.org/file/bot{bot_info['token']}/photos/{file_path}"
-                    self._logger.info(f"Generated photo URL: {photo_url}")
-                    
-                    # Update chat with photo
-                    await self._update_chat_photo(chat, photo_url)
-                else:
-                    self._logger.info("No photos found for user")
+                if message.from_user:
+                    self._logger.info(f"Getting photos for user {message.from_user.id}")
+                    photos = await message.from_user.get_profile_photos()
+                    if photos and photos.total_count > 0:
+                        self._logger.info(f"Found {photos.total_count} photos")
+                        photo = photos.photos[0][-1]  # Get the last (smallest) size of the first photo
+                        file = await photo.get_file()
+                        self._logger.info(f"Raw file path from Telegram: {file.file_path}")
+                        
+                        # Extract only the file path if it's a full URL
+                        file_path = file.file_path
+                        if file_path.startswith('https://'):
+                            file_path = file_path.split('/photos/')[-1]
+                        
+                        # Get bot token for photo URL
+                        result = await self._session.execute(
+                            select(Bot).where(Bot.id == bot_id)
+                        )
+                        bot = result.scalar_one_or_none()
+                        if bot:
+                            # Generate clean photo URL
+                            photo_url = f"https://api.telegram.org/file/bot{bot.token}/photos/{file_path}"
+                            self._logger.info(f"Generated photo URL: {photo_url}")
+                            
+                            # Update chat with photo
+                            await self._update_chat_photo(chat, photo_url)
+                        else:
+                            self._logger.error(f"Bot not found for id {bot_id}")
+                    else:
+                        self._logger.info("No photos found for user")
             except Exception as e:
                 self._logger.error(f"Failed to get user photo: {str(e)}", exc_info=True)
             
-            # Save message
-            await self._save_message(
-                chat_id=chat.id,
-                content=message.text or "",
-                sent_at=message.date
-            )
-            
-            await self._session.commit()
-            self._logger.info(f"Successfully saved message to chat {chat.id}")
+            # Only save message if it has text content
+            if message.text:
+                await self._save_message(
+                    chat_id=chat.id,
+                    content=message.text,
+                    sent_at=message.date
+                )
+                
+                await self._session.commit()
+                self._logger.info(f"Successfully saved message to chat {chat.id}")
+            else:
+                self._logger.info("Skipping message without text content")
             
         except Exception as e:
-            self._logger.error(f"Error processing message: {str(e)}")
+            self._logger.error(f"Error processing message: {str(e)}", exc_info=True)
+            await self._session.rollback()
             raise
 
     async def process_outgoing_message(
         self,
         workspace_id: UUID,
         telegram_id: int,
+        bot_id: UUID,
         text: str,
     ) -> None:
         """Process outgoing message"""
         try:
+            if not text or not text.strip():
+                logger.error("Empty message text")
+                return
+
             # Get chat
             result = await self._session.execute(
                 select(Chat).where(
                     Chat.workspace_id == workspace_id,
                     Chat.telegram_id == telegram_id,
+                    Chat.bot_id == bot_id,
                 )
             )
             chat = result.scalar_one_or_none()
             
             if not chat:
-                logger.error("Chat not found")
+                logger.error(f"Chat not found for workspace_id={workspace_id}, telegram_id={telegram_id}, bot_id={bot_id}")
                 return
             
             # Create message and update chat
             sent_at = datetime.utcnow()
             message = Message(
                 chat_id=chat.id,
-                content=text,
+                content=text.strip(),
                 sent_at=sent_at,
                 direction=MessageDirection.OUTGOING,
             )
@@ -203,7 +219,9 @@ class MessageProcessor:
             
             self._session.add(message)
             await self._session.commit()
+            logger.info(f"Successfully saved outgoing message to chat {chat.id}")
             
         except Exception as e:
-            logger.error(f"Error processing outgoing message: {str(e)}")
+            logger.error(f"Error processing outgoing message: {str(e)}", exc_info=True)
+            await self._session.rollback()
             raise 

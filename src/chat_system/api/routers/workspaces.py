@@ -112,11 +112,7 @@ async def add_bot(
                 detail="Бот с таким токеном уже зарегистрирован в другом рабочем пространстве. Пожалуйста, используйте другой токен бота."
             )
 
-        # Initialize bot first to validate token
-        if not await telegram_manager.initialize_bot(workspace_id, bot.token):
-            raise HTTPException(status_code=400, detail="Failed to initialize bot")
-
-        # Create bot record
+        # Create bot record first to get bot_id
         db_bot = Bot(
             workspace_id=workspace_id,
             name=bot.name,
@@ -124,14 +120,20 @@ async def add_bot(
         )
         session.add(db_bot)
         await session.flush()
-        
+
+        # Initialize bot with bot_id
+        if not await telegram_manager.initialize_bot(workspace_id, bot.token, db_bot.id):
+            # Cleanup on failure
+            await session.rollback()
+            raise HTTPException(status_code=400, detail="Failed to initialize bot")
+
         # Get existing chats and messages for this bot
-        bot_info = await telegram_manager.get_bot_info(workspace_id)
+        bot_info = await telegram_manager.get_bot_info(workspace_id, db_bot.id)
         if bot_info:
             logger.info(f"Got bot info: {bot_info['id']}")
             
             # Get all chats for this bot
-            chats = await telegram_manager.get_bot_chats(workspace_id)
+            chats = await telegram_manager.get_bot_chats(workspace_id, db_bot.id)
             logger.info(f"Found {len(chats)} chats")
             
             for chat in chats:
@@ -142,6 +144,7 @@ async def add_bot(
                     select(Chat).where(
                         Chat.workspace_id == workspace_id,
                         Chat.telegram_id == chat.id,
+                        Chat.bot_id == db_bot.id
                     )
                 )
                 db_chat = result.scalar_one_or_none()
@@ -150,6 +153,7 @@ async def add_bot(
                         workspace_id=workspace_id,
                         telegram_id=chat.id,
                         username=chat.username or "",
+                        bot_id=db_bot.id
                     )
                     session.add(db_chat)
                     await session.flush()
@@ -158,7 +162,7 @@ async def add_bot(
                     logger.info(f"Using existing chat record: {db_chat.id}")
 
                 # Get chat history
-                messages = await telegram_manager.get_chat_history(workspace_id, chat.id)
+                messages = await telegram_manager.get_chat_history(workspace_id, chat.id, db_bot.id)
                 logger.info(f"Got {len(messages)} messages from history")
                 
                 for msg in messages:
@@ -199,9 +203,12 @@ async def add_bot(
     except Exception as e:
         await session.rollback()
         # Cleanup bot if it was initialized
-        await telegram_manager.cleanup_bot(workspace_id)
+        if 'db_bot' in locals() and db_bot.id:
+            await telegram_manager.cleanup_bot(workspace_id, db_bot.id)
         logger.error(f"Failed to add bot: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to add bot")
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{workspace_id}/bots", response_model=List[BotResponse])
 async def get_bots(
@@ -229,11 +236,12 @@ async def get_chats(
     # Check workspace access
     workspace = await get_workspace_or_404(session, workspace_id, current_user)
     
-    # Get chats with telegram profiles and last messages
+    # Get chats with telegram profiles, bots and last messages
     result = await session.execute(
         select(Chat)
         .options(
-            joinedload(Chat.last_message)
+            joinedload(Chat.last_message),
+            joinedload(Chat.bot)
         )
         .where(Chat.workspace_id == workspace_id)
         .order_by(Chat.last_message_at.desc())
@@ -245,7 +253,7 @@ async def get_chats(
     chat_list = []
     for chat in chats:
         chat_response = ChatResponse.from_orm(chat)
-        logger.info(f"Chat {chat.id} photo_url: {chat.photo_url}, has photo_data: {bool(chat.photo_data)}")
+        logger.info(f"Chat {chat.id} for bot {chat.bot.name} ({chat.bot_id})")
         chat_list.append(chat_response)
     
     return chat_list
