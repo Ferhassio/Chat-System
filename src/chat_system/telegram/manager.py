@@ -1,21 +1,56 @@
+import openai
 import telegram
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 from telegram.error import TimedOut
-from sqlalchemy import select
+from sqlalchemy import select, delete
 
 from uuid import UUID
 import logging
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import json
 
 from src.chat_system.core.config import settings
 from src.chat_system.telegram.processor import MessageProcessor
 from src.chat_system.db.session import async_session_factory
-from src.chat_system.db.models import Bot, Chat, Message
+from src.chat_system.db.models import Bot, Chat, Message, AnalysisResult
 from src.chat_system.db.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
+
+# Define the CLIENT_MESSAGE_ANALYSIS_INSTRUCTIONS template
+CLIENT_MESSAGE_ANALYSIS_INSTRUCTIONS = """
+Проанализируй диалог с клиентом и предоставь информацию о нем.
+
+Контекст диалога:
+{chat_context}
+
+Проанализируй диалог и верни JSON с обновленной информацией о клиенте. 
+
+Поля для анализа:
+- client_summary: общее описание клиента на основе диалога - оно не должно опираться на статус
+- client_name_from_chat: имя клиента, если упоминается в диалоге
+- client_city: город клиента, если упоминается
+- avg_spent: средний чек (только число)
+- desired_item: интересующий товар
+- client_nature: характер клиента
+- client_sex: пол клиента (male/female/null)
+- client_phone_number: номер телефона, если упоминается
+
+Верни результат в формате JSON, без markup и слова json. Не используй кавычки в текстовых значениях, если это не требуется синтаксисом JSON.
+Поля JSON:
+
+    "client_summary": "Клиент интересуется товаром, спросил про цену.",
+    "client_name_from_chat": "Иван",
+    "client_city": "Москва",
+    "avg_spent": 5000,
+    "desired_item": "красная футболка",
+    "client_nature": "спокойный",
+    "client_sex": "мужской",
+    "client_phone_number": "+7 999 123-45-67"
+
+"""
 
 class TelegramManager:
     def __init__(self):
@@ -239,7 +274,8 @@ class TelegramManager:
             return False
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming message"""
+        """Handle incoming message and trigger analysis"""
+        logger.debug("_handle_message called")  # Added logging
         if not update.message or not update.message.text:
             logger.debug("Skipping non-message or non-text update")
             return
@@ -279,6 +315,23 @@ class TelegramManager:
                         logger.error(f"Failed to process message (attempt {attempt}/3): {str(e)}", exc_info=True)
                         await session.rollback()
                         await asyncio.sleep(1)
+
+        # After processing the message, retrieve the database chat_id
+        chat = await session.execute(
+            select(Chat).where(
+                Chat.workspace_id == workspace_id,
+                Chat.telegram_id == message.chat.id,
+                Chat.bot_id == bot_id
+            )
+        )
+        chat_id = chat.scalar_one_or_none().id if chat else None
+
+        if chat_id:
+            # Trigger chat analysis with the correct chat_id
+            logger.debug("Triggering chat analysis")  # Added logging
+            asyncio.create_task(self._analyze_chat(workspace_id, chat_id, bot_id))
+        else:
+            logger.error(f"Failed to find chat in database for telegram_id: {message.chat.id}")
 
     async def get_bot_info(self, workspace_id: UUID, bot_id: UUID = None) -> Optional[Dict[str, Any]]:
         """Get bot info by workspace id and optionally bot_id"""
@@ -336,7 +389,7 @@ class TelegramManager:
                     if not bot_info:
                         logger.error("Failed to get bot info")
                         return
-                        
+                    
                     logger.info(f"Getting updates for bot {bot_info.username}")
                     
                     for _ in range(3):  # Try up to 3 times
@@ -351,7 +404,7 @@ class TelegramManager:
                             if not new_updates:
                                 logger.info("No new updates found")
                                 break
-                                
+                            
                             updates.extend(new_updates)
                             offset = new_updates[-1].update_id + 1
                             logger.info(f"Got {len(new_updates)} new updates")
@@ -409,38 +462,115 @@ class TelegramManager:
             logger.error(f"Failed to get bot chats: {str(e)}", exc_info=True)
             return []
 
-    async def get_chat_history(self, workspace_id: UUID, chat_id: int, bot_id: UUID = None, limit: int = 100):
-        """Get chat message history"""
+    async def get_chat_history(self, workspace_id: UUID, chat_id: UUID, bot_id: UUID = None, limit: int = 100):
+        """Get chat message history from the database"""
         try:
-            # Get the specific bot application
-            key = (workspace_id, bot_id) if bot_id else None
-            if not key or key not in self._bots:
-                logger.error(f"No bot found for workspace {workspace_id}, bot {bot_id}")
-                return []
-            
-            application = self._bots[key]
-            
-            messages = []
-            try:
-                # Get chat first
-                chat = await application.bot.get_chat(chat_id)
-                if not chat:
-                    return []
-                
-                # Then get history
-                async for message in chat.get_history(limit=limit):
-                    if message.text:  # Only store text messages for now
-                        messages.append(message)
-                
+            async with self._session_factory() as session:
+                # Query messages from the database
+                result = await session.execute(
+                    select(Message).where(
+                        Message.chat_id == chat_id
+                    ).order_by(Message.sent_at.desc()).limit(limit)
+                )
+                messages = result.scalars().all()
                 return messages
-                
-            except Exception as e:
-                logger.error(f"Failed to get chat history: {str(e)}", exc_info=True)
-                return []
-                
         except Exception as e:
             logger.error(f"Failed to get chat history: {str(e)}", exc_info=True)
             return []
+
+    async def _analyze_chat(self, workspace_id: UUID, chat_id: UUID, bot_id: UUID):
+        """Analyze chat history after 5 seconds of inactivity"""
+        try:
+            # Wait for 5 seconds to check for inactivity
+            await asyncio.sleep(5)
+
+            # Fetch chat history
+            chat_history = await self.get_chat_history(workspace_id, chat_id, bot_id)
+            if not chat_history:
+                logger.error(f"No chat history found for chat_id: {chat_id}")
+                return
+
+            # Format chat history
+            formatted_history = self._format_chat_history(chat_history)
+            # Prepare prompt
+            prompt = CLIENT_MESSAGE_ANALYSIS_INSTRUCTIONS.format(
+                chat_context=formatted_history
+            )
+
+            # Call OpenAI API
+            response = await self._call_openai_api(prompt)
+
+            if response:
+                # Parse and store the response
+                await self._store_analysis_result(workspace_id, chat_id, response)
+
+        except Exception as e:
+            logger.error(f"Failed to analyze chat: {str(e)}", exc_info=True)
+
+    async def _call_openai_api(self, prompt: str) -> Optional[Dict[str, Any]]:
+        """Call OpenAI API to analyze chat"""
+        try:
+            client = openai.OpenAI(api_key="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")
+            response = ""
+            stream = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    response += chunk.choices[0].delta.content
+                    print(chunk.choices[0].delta.content, end="")
+                else:
+                    print("No content")
+            return response
+
+        except Exception as e:
+            logger.error(f"Failed to call OpenAI API: {str(e)}", exc_info=True)
+            return None
+
+    async def _store_analysis_result(self, workspace_id: UUID, chat_id: UUID, analysis_result: str):
+        """Store the analysis result in the database"""
+        try:
+            logger.debug(f"Storing analysis result for workspace_id: {workspace_id}, chat_id: {chat_id}")  # Added logging
+            # Parse JSON result
+            analysis_data = json.loads(analysis_result)
+            logger.debug(f"Parsed analysis data: {analysis_data}")
+
+            # Store in the database
+            async with self._session_factory() as session:
+                # Delete existing entry if it exists
+                await session.execute(
+                    delete(AnalysisResult).where(
+                        AnalysisResult.chat_id == chat_id,
+                        AnalysisResult.workspace_id == workspace_id
+                    )
+                )
+                
+                # Create new entry
+                analysis_entry = AnalysisResult(
+                    chat_id=chat_id,
+                    workspace_id=workspace_id,
+                    analysis_data=analysis_data
+                )
+                session.add(analysis_entry)
+                logger.info(f"Stored analysis result for chat {chat_id}")
+
+                await session.commit()
+
+            logger.info(f"Stored analysis result for chat {chat_id}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse analysis result JSON: {str(e)}", exc_info=True)  # Added logging
+        except Exception as e:
+            logger.error(f"Failed to store analysis result: {str(e)}", exc_info=True)
+
+    def _format_chat_history(self, chat_history: List[Message]) -> str:
+        """Format chat history for analysis"""
+        formatted = []
+        for message in chat_history:
+            role = "CLIENT" if message.direction == MessageDirection.INCOMING else "MANAGER"
+            formatted.append(f"{role}: {message.content}")
+        return "\n".join(formatted)
 
 # Create global instance
 telegram_manager = TelegramManager() 

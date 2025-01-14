@@ -2,6 +2,12 @@ import os
 import sys
 import uvicorn
 from manage_db import recreate_database
+import logging
+
+# Set the logging level for all SQLAlchemy loggers
+logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine.Engine').setLevel(logging.WARNING)
 
 def main():
     # Check if we need to recreate the database

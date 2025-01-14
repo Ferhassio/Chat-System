@@ -19,11 +19,14 @@ from src.chat_system.api.schemas import (
     UserResponse,
     WorkspaceUserCreate,
 )
-from src.chat_system.db.models import Bot, Chat, Message, User, Workspace, WorkspaceUser
+from src.chat_system.db.models import Bot, Chat, Message, User, Workspace, WorkspaceUser, AnalysisResult
 from src.chat_system.telegram.manager import telegram_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Set SQLAlchemy engine logging level to WARNING to hide detailed query logs
+logging.getLogger('sqlalchemy.engine.Engine').setLevel(logging.WARNING)
 
 async def get_workspace_or_404(session: AsyncSession, workspace_id: UUID, current_user: User) -> Workspace:
     """Get workspace by id or raise 404 if not found or no access"""
@@ -525,3 +528,64 @@ async def mark_chat_read(
     await session.commit()
     
     return response 
+
+@router.get("/{workspace_id}/chats/{chat_id}/bots/{bot_id}/analysis")
+async def get_chat_analysis(
+    workspace_id: UUID,
+    chat_id: UUID,
+    bot_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Get analysis data for a specific chat and bot"""
+    logger.debug(f"Fetching analysis for workspace_id: {workspace_id}, chat_id: {chat_id}, bot_id: {bot_id}")
+
+    # Check if user has access to workspace (either owner or member)
+    workspace_access = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+        ).where(
+            (Workspace.owner_id == current_user.id) | 
+            (Workspace.id.in_(
+                select(WorkspaceUser.workspace_id).where(
+                    WorkspaceUser.user_id == current_user.id
+                )
+            ))
+        )
+    )
+    
+    workspace = workspace_access.scalar_one_or_none()
+    if not workspace:
+        logger.error("Workspace not found or access denied")
+        raise HTTPException(
+            status_code=404, 
+            detail="Рабочее пространство не найдено или у вас нет к нему доступа"
+        )
+
+    # Check if chat exists and belongs to workspace
+    result = await session.execute(
+        select(Chat).where(
+            Chat.id == chat_id,
+            Chat.workspace_id == workspace_id,
+            Chat.bot_id == bot_id  # Ensure the chat is associated with the correct bot
+        )
+    )
+    chat = result.scalar_one_or_none()
+    if not chat:
+        logger.error(f"Chat not found for chat_id: {chat_id}, workspace_id: {workspace_id}, bot_id: {bot_id}")
+        raise HTTPException(status_code=404, detail="Чат не найден")
+
+    # Fetch analysis data from the database
+    result = await session.execute(
+        select(AnalysisResult).where(
+            AnalysisResult.chat_id == chat_id,
+            AnalysisResult.workspace_id == workspace_id
+        )
+    )
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        logger.error(f"Analysis not found for chat_id: {chat_id}, workspace_id: {workspace_id}")
+        raise HTTPException(status_code=404, detail="Анализ не найден")
+
+    logger.info("Analysis data retrieved successfully")
+    return {"analysis_data": analysis.analysis_data} 

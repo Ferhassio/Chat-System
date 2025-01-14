@@ -188,6 +188,18 @@
             font-size: 0.8em;
             color: #666;
         }
+        .ai-button {
+            margin-left: auto;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .ai-button:hover {
+            background-color: #218838;
+        }
     </style>
 </head>
 <body>
@@ -225,8 +237,9 @@
             <!-- Messages -->
             <div class="col-6">
                 <div class="card">
-                    <div class="card-header">
-                        <h5 class="card-title mb-0" id="chatTitle">Select a chat</h5>
+                    <div class="card-header d-flex align-items-center">
+                        <h5 class="mb-0">Chat Title</h5>
+                        <button class="ai-button" id="aiButton">AI</button>
                     </div>
                     <div class="card-body">
                         <div class="message-list mb-3" id="messageList">
@@ -349,58 +362,559 @@
         </div>
     </div>
 
+    <!-- Modal -->
+    <div class="modal fade" id="aiModal" tabindex="-1" aria-labelledby="aiModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="aiModalLabel">AI Analysis</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p id="aiAnalysisContent">Loading...</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Global variables
-        let currentWorkspaceId = null;
-        let currentChatId = null;
-        let currentBotId = null;
-        const accessToken = localStorage.getItem('accessToken');
+        document.addEventListener('DOMContentLoaded', function() {
+            // Global variables
+            let currentWorkspaceId = null;
+            let currentChatId = null;
+            let currentBotId = null;
+            const accessToken = localStorage.getItem('accessToken');
 
-        // Check authentication
-        if (!accessToken) {
-            window.location.replace('/auth');
-        }
-
-        // Initialize Bootstrap modals
-        const createWorkspaceModal = new bootstrap.Modal('#createWorkspaceModal');
-        const addBotModal = new bootstrap.Modal('#addBotModal');
-        const manageUsersModal = new bootstrap.Modal('#manageUsersModal');
-
-        // Message sending function
-        async function sendMessage() {
-            const messageInput = document.getElementById('messageInput');
-            const text = messageInput.value.trim();
-            
-            if (!text || !currentWorkspaceId || !currentChatId || !currentBotId) {
-                console.log('Missing required data:', {
-                    hasText: !!text,
-                    hasWorkspace: !!currentWorkspaceId,
-                    hasChat: !!currentChatId,
-                    hasBot: !!currentBotId
-                });
-                return;
+            // Check authentication
+            if (!accessToken) {
+                window.location.replace('/auth');
             }
-            
-            try {
-                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ content: text })
-                });
+
+            // Initialize Bootstrap modals
+            const createWorkspaceModal = new bootstrap.Modal('#createWorkspaceModal');
+            const addBotModal = new bootstrap.Modal('#addBotModal');
+            const manageUsersModal = new bootstrap.Modal('#manageUsersModal');
+
+            // Message sending function
+            async function sendMessage() {
+                const messageInput = document.getElementById('messageInput');
+                const text = messageInput.value.trim();
                 
-                if (response.ok) {
-                    // Clear input immediately
-                    messageInput.value = '';
+                if (!text || !currentWorkspaceId || !currentChatId || !currentBotId) {
+                    console.log('Missing required data:', {
+                        hasText: !!text,
+                        hasWorkspace: !!currentWorkspaceId,
+                        hasChat: !!currentChatId,
+                        hasBot: !!currentBotId
+                    });
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ content: text })
+                    });
                     
-                    // Add the sent message to the UI
-                    const message = await response.json();
-                    const messageList = document.getElementById('messageList');
+                    if (response.ok) {
+                        // Clear input immediately
+                        messageInput.value = '';
+                        
+                        // Add the sent message to the UI
+                        const message = await response.json();
+                        const messageList = document.getElementById('messageList');
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = 'message message-outgoing';
+                        messageDiv.dataset.chatId = currentChatId;
+                        messageDiv.dataset.workspaceId = currentWorkspaceId;
+                        messageDiv.innerHTML = `
+                            <div class="message-content">
+                                <div class="message-text">${message.content}</div>
+                                <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
+                            </div>
+                        `;
+                        messageList.appendChild(messageDiv);
+                        messageList.scrollTop = messageList.scrollHeight;
+                        
+                        // Force update messages to get the latest state
+                        await updateMessages();
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    } else {
+                        const data = await response.json();
+                        console.error('Error sending message:', data);
+                    }
+                } catch (error) {
+                    console.error('Error sending message:', error);
+                }
+            }
+
+            // Event listeners
+            document.getElementById('createWorkspaceBtn').addEventListener('click', () => createWorkspaceModal.show());
+            document.getElementById('addBotBtn').addEventListener('click', () => {
+                loadWorkspacesForBotModal();
+                addBotModal.show();
+            });
+            document.getElementById('logoutBtn').addEventListener('click', logout);
+            document.getElementById('createWorkspaceSubmitBtn').addEventListener('click', createWorkspace);
+            document.getElementById('addBotSubmitBtn').addEventListener('click', async (e) => {
+                e.preventDefault();  // Prevent default form submission
+                const workspaceId = document.getElementById('botWorkspace').value;
+                if (!workspaceId) {
+                    showError('Пожалуйста, выберите рабочее пространство');
+                    return;
+                }
+                await addBot(workspaceId);
+            });
+
+            // Message sending event listeners
+            const sendMessageBtn = document.getElementById('sendMessageBtn');
+            const messageInput = document.getElementById('messageInput');
+
+            if (sendMessageBtn) {
+                sendMessageBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Send button clicked');
+                    sendMessage();
+                });
+            }
+
+            if (messageInput) {
+                messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        console.log('Enter key pressed');
+                        sendMessage();
+                    }
+                });
+            }
+
+            document.getElementById('manageUsersBtn').addEventListener('click', () => {
+                loadWorkspacesForUserModal();
+                manageUsersModal.show();
+            });
+
+            document.getElementById('addUserForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const workspaceId = document.getElementById('userWorkspace').value;
+                const email = document.getElementById('userEmail').value;
+                
+                if (!workspaceId || !email) {
+                    showError('Пожалуйста, заполните все поля');
+                    return;
+                }
+                
+                await addUserToWorkspace(workspaceId, email);
+            });
+
+            // Load initial data
+            loadWorkspaces();
+
+            // Functions
+            async function loadWorkspaces() {
+                try {
+                    const response = await fetch('/api/workspaces/', {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const workspaces = await response.json();
+                        displayWorkspaces(workspaces);
+                        
+                        // If there's a current workspace, update its name
+                        if (currentWorkspaceId) {
+                            const currentWorkspace = workspaces.find(w => w.id === currentWorkspaceId);
+                            if (currentWorkspace) {
+                                currentWorkspaceName = currentWorkspace.name;
+                            }
+                        }
+                        
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    }
+                } catch (error) {
+                    console.error('Error loading workspaces:', error);
+                }
+            }
+
+            function displayWorkspaces(workspaces) {
+                const workspaceDropdown = document.getElementById('workspaceDropdown');
+                workspaceDropdown.innerHTML = workspaces.map(workspace => `
+                    <option value="${workspace.id}">${workspace.name}</option>
+                `).join('');
+
+                // Load the first workspace by default
+                if (workspaces.length > 0) {
+                    workspaceDropdown.value = workspaces[0].id;
+                    loadChats(workspaces[0].id);
+                }
+
+                // Add change event listener
+                workspaceDropdown.addEventListener('change', (e) => {
+                    const selectedWorkspaceId = e.target.value;
+                    loadChats(selectedWorkspaceId);
+                });
+            }
+
+            let chatUpdateInterval;
+
+            function startChatUpdates(workspaceId) {
+                stopChatUpdates();
+                chatUpdateInterval = setInterval(() => updateChats(workspaceId), 3000);
+            }
+
+            function stopChatUpdates() {
+                if (chatUpdateInterval) {
+                    clearInterval(chatUpdateInterval);
+                    chatUpdateInterval = null;
+                }
+            }
+
+            async function updateChats(workspaceId) {
+                if (!workspaceId) return;
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    if (response.ok) {
+                        const newChats = await response.json();
+                        
+                        // Compare with existing chats
+                        const currentChats = window.chats || [];
+                        const hasNewChats = newChats.length > currentChats.length;
+                        const hasUpdates = newChats.some((chat, index) => {
+                            const currentChat = currentChats[index];
+                            return !currentChat || 
+                                chat.has_unread !== currentChat.has_unread ||
+                                chat.last_message?.content !== currentChat.last_message?.content;
+                        });
+                        
+                        if (hasNewChats || hasUpdates) {
+                            window.chats = newChats;
+                            displayChats(newChats);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error updating chats:', error);
+                }
+            }
+
+            // Update loadChats function to start chat updates
+            async function loadChats(workspaceId) {
+                const chatList = document.getElementById('chatList');
+                chatList.innerHTML = '<div class="loading-spinner">Loading chats...</div>';
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const chats = await response.json();
+                        window.chats = chats;
+                        currentWorkspaceId = workspaceId;
+                        
+                        if (chats.length > 0 && !currentChatId) {
+                            currentChatId = chats[0].id;
+                            if (document.getElementById('chatTitle')) {
+                                document.getElementById('chatTitle').textContent = `Chat with @${chats[0].username} (${chats[0].bot?.name || 'Unknown bot'})`;
+                            }
+                            loadMessages(workspaceId, currentChatId);
+                        } else if (chats.length === 0) {
+                            chatList.innerHTML = '<div class="loading-text">No chats available</div>';
+                            document.getElementById('messageList').innerHTML = '';
+                            document.getElementById('chatTitle').textContent = 'No chats available';
+                            return;
+                        }
+                        
+                        displayChats(chats);
+                        startChatUpdates(workspaceId); // Start chat updates
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    }
+                } catch (error) {
+                    console.error('Error loading chats:', error);
+                    chatList.innerHTML = '<div class="loading-text text-danger">Error loading chats</div>';
+                }
+            }
+
+            // Debounce function
+            function debounce(func, wait) {
+                let timeout;
+                return function(...args) {
+                    const context = this;
+                    clearTimeout(timeout);
+                    timeout = setTimeout(() => func.apply(context, args), wait);
+                };
+            }
+
+            // Virtual scrolling setup
+            const chatList = document.getElementById('chatList');
+            const messageList = document.getElementById('messageList');
+
+            function virtualScroll(container, items, renderItem) {
+                const itemHeight = 60; // Approximate height of each item
+                const buffer = 5; // Number of items to render above and below the viewport
+
+                function render() {
+                    const scrollTop = container.scrollTop;
+                    const containerHeight = container.clientHeight;
+                    const totalHeight = items.length * itemHeight;
+                    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - buffer);
+                    const endIndex = Math.min(items.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + buffer);
+
+                    const fragment = document.createDocumentFragment();
+                    for (let i = startIndex; i < endIndex; i++) {
+                        const item = renderItem(items[i]);
+                        fragment.appendChild(item);
+                    }
+                    container.innerHTML = '';
+                    container.appendChild(fragment);
+
+                    // Adjust scroll position if at the bottom
+                    if (scrollTop + containerHeight >= totalHeight - itemHeight) {
+                        container.scrollTop = totalHeight - containerHeight;
+                    }
+                }
+
+                container.addEventListener('scroll', debounce(render, 50));
+                render();
+            }
+
+            // Ensure chat switching works
+            function displayChats(chats, workspaceId) {
+                chatList.innerHTML = '';
+                chats.forEach(chat => {
+                    const chatDiv = document.createElement('div');
+                    chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
+                    chatDiv.dataset.chatId = chat.id;
+                    chatDiv.dataset.workspaceId = chat.workspace_id;
+                    chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
+                    
+                    let lastMessageText = 'No messages';
+                    if (chat.last_message) {
+                        lastMessageText = chat.last_message.content.length > 50 
+                            ? chat.last_message.content.substring(0, 47) + '...'
+                            : chat.last_message.content;
+                    }
+                    
+                    chatDiv.innerHTML = `
+                        <div class="chat-avatar">
+                            ${chat.photo_data ? 
+                                `<img src="data:image/jpeg;base64,${hexToBase64(chat.photo_data)}" alt="@${chat.username}" loading="lazy" onerror="this.parentElement.innerHTML='<span class='chat-avatar-icon'></span>'">` :
+                                `<span class="chat-avatar-icon"></span>`
+                            }
+                        </div>
+                        <div class="chat-info">
+                            <div class="chat-name">
+                                @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                                ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
+                            </div>
+                            <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
+                        </div>
+                    `;
+                    
+                    chatDiv.addEventListener('click', async () => {
+                        console.log('Chat clicked:', {
+                            workspaceId: chat.workspace_id,
+                            chatId: chat.id,
+                            botId: chat.bot_id
+                        });
+
+                        // Remove active class from all chats
+                        document.querySelectorAll('.chat-item').forEach(item => {
+                            item.classList.remove('active');
+                        });
+                        
+                        // Add active class to clicked chat
+                        chatDiv.classList.add('active');
+                        
+                        // Update current chat, workspace, and bot IDs
+                        currentChatId = chat.id;
+                        currentWorkspaceId = chat.workspace_id;
+                        currentBotId = chat.bot_id;  // Ensure bot_id is assigned
+                        
+                        // Update chat title with bot name
+                        if (document.getElementById('chatTitle')) {
+                            document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
+                        }
+                        
+                        // Show loading animation for messages
+                        document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
+                        
+                        // Fetch messages for the selected chat
+                        await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
+                        
+                        // Mark as read
+                        if (chat.has_unread) {
+                            try {
+                                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/mark_read`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                                    }
+                                });
+                                
+                                if (response.ok) {
+                                    chatDiv.classList.remove('unread');
+                                    chatDiv.querySelector('.unread-badge')?.remove();
+                                }
+                            } catch (error) {
+                                console.error('Error marking chat as read:', error);
+                            }
+                        }
+                    });
+                    
+                    chatList.appendChild(chatDiv);
+                });
+            }
+
+            let isLoadingMessages = false;
+            let messageUpdateInterval;
+            let currentLoadingChatId = null;
+
+            async function loadMessages(workspaceId, chatId, botId) {
+                // Validate IDs before making request
+                if (!workspaceId || !chatId || !botId) {
+                    console.log('Invalid workspace, chat, or bot ID:', { workspaceId, chatId, botId });
+                    document.getElementById('messageList').innerHTML = '<div class="loading-text">Please select a chat"</div>';
+                    return;
+                }
+                
+                // Clear any existing message update interval
+                stopMessageUpdates();
+                
+                // If already loading messages for this chat, skip
+                if (isLoadingMessages && currentLoadingChatId === chatId) {
+                    console.log('Already loading messages for this chat, skipping request');
+                    return;
+                }
+                
+                try {
+                    isLoadingMessages = true;
+                    currentLoadingChatId = chatId;
+                    
+                    const response = await fetch(`/api/workspaces/${workspaceId}/chats/${chatId}/bots/${botId}/messages`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    // Check if chat was switched while loading
+                    if (currentChatId !== chatId) {
+                        console.log('Chat switched while loading messages, discarding results');
+                        return;
+                    }
+                    
+                    if (response.ok) {
+                        const messages = await response.json();
+                        
+                        // Double check if we're still on the same chat after awaiting json
+                        if (currentChatId !== chatId) {
+                            console.log('Chat switched while parsing messages, discarding results');
+                            return;
+                        }
+                        
+                        if (messages.length === 0) {
+                            document.getElementById('messageList').innerHTML = '<div class="loading-text">No messages yet</div>';
+                        } else {
+                            displayMessages(messages);
+                            startMessageUpdates();
+                        }
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    }
+                } catch (error) {
+                    console.error('Error loading messages:', error);
+                    if (currentChatId === chatId) {
+                        document.getElementById('messageList').innerHTML = '<div class="loading-text text-danger">Error loading messages</div>';
+                    }
+                } finally {
+                    isLoadingMessages = false;
+                    if (currentLoadingChatId === chatId) {
+                        currentLoadingChatId = null;
+                    }
+                }
+            }
+
+            function stopMessageUpdates() {
+                if (messageUpdateInterval) {
+                    clearInterval(messageUpdateInterval);
+                    messageUpdateInterval = null;
+                }
+            }
+
+            function startMessageUpdates() {
+                stopMessageUpdates();
+                messageUpdateInterval = setInterval(updateMessages, 3000);
+            }
+
+            async function updateMessages() {
+                if (!currentWorkspaceId || !currentChatId || isLoadingMessages) {
+                    return;
+                }
+                
+                const chatId = currentChatId; // Store current chat ID for comparison
+                
+                try {
+                    isLoadingMessages = true;
+                    const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    // Verify we're still on the same chat
+                    if (currentChatId !== chatId) {
+                        return;
+                    }
+                    
+                    if (response.ok) {
+                        const messages = await response.json();
+                        
+                        // Verify again after parsing JSON
+                        if (currentChatId !== chatId) {
+                            return;
+                        }
+                        
+                        const messageList = document.getElementById('messageList');
+                        const currentMessages = Array.from(messageList.children)
+                            .filter(el => el.classList.contains('message'));
+                        
+                        if (messages.length > currentMessages.length) {
+                            displayMessages(messages);
+                        }
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    }
+                } catch (error) {
+                    console.error('Error updating messages:', error);
+                } finally {
+                    isLoadingMessages = false;
+                }
+            }
+
+            function displayMessages(messages) {
+                const messageList = document.getElementById('messageList');
+                messageList.dataset.currentChatId = currentChatId; // Store current chat ID
+                const wasAtBottom = messageList.scrollHeight - messageList.scrollTop === messageList.clientHeight;
+                
+                // Clear existing messages
+                messageList.innerHTML = '';
+                
+                // Add all messages
+                messages.forEach(message => {
                     const messageDiv = document.createElement('div');
-                    messageDiv.className = 'message message-outgoing';
+                    messageDiv.className = `message ${message.direction === 'outgoing' ? 'message-outgoing' : 'message-incoming'}`;
                     messageDiv.dataset.chatId = currentChatId;
                     messageDiv.dataset.workspaceId = currentWorkspaceId;
                     messageDiv.innerHTML = `
@@ -410,917 +924,478 @@
                         </div>
                     `;
                     messageList.appendChild(messageDiv);
-                    messageList.scrollTop = messageList.scrollHeight;
-                    
-                    // Force update messages to get the latest state
-                    await updateMessages();
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                } else {
-                    const data = await response.json();
-                    console.error('Error sending message:', data);
-                }
-            } catch (error) {
-                console.error('Error sending message:', error);
-            }
-        }
-
-        // Event listeners
-        document.getElementById('createWorkspaceBtn').addEventListener('click', () => createWorkspaceModal.show());
-        document.getElementById('addBotBtn').addEventListener('click', () => {
-            loadWorkspacesForBotModal();
-            addBotModal.show();
-        });
-        document.getElementById('logoutBtn').addEventListener('click', logout);
-        document.getElementById('createWorkspaceSubmitBtn').addEventListener('click', createWorkspace);
-        document.getElementById('addBotSubmitBtn').addEventListener('click', async (e) => {
-            e.preventDefault();  // Prevent default form submission
-            const workspaceId = document.getElementById('botWorkspace').value;
-            if (!workspaceId) {
-                showError('Пожалуйста, выберите рабочее пространство');
-                return;
-            }
-            await addBot(workspaceId);
-        });
-
-        // Message sending event listeners
-        const sendMessageBtn = document.getElementById('sendMessageBtn');
-        const messageInput = document.getElementById('messageInput');
-
-        if (sendMessageBtn) {
-            sendMessageBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                console.log('Send button clicked');
-                sendMessage();
-            });
-        }
-
-        if (messageInput) {
-            messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    console.log('Enter key pressed');
-                    sendMessage();
-                }
-            });
-        }
-
-        document.getElementById('manageUsersBtn').addEventListener('click', () => {
-            loadWorkspacesForUserModal();
-            manageUsersModal.show();
-        });
-
-        document.getElementById('addUserForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const workspaceId = document.getElementById('userWorkspace').value;
-            const email = document.getElementById('userEmail').value;
-            
-            if (!workspaceId || !email) {
-                showError('Пожалуйста, заполните все поля');
-                return;
-            }
-            
-            await addUserToWorkspace(workspaceId, email);
-        });
-
-        // Load initial data
-        loadWorkspaces();
-
-        // Functions
-        async function loadWorkspaces() {
-            try {
-                const response = await fetch('/api/workspaces/', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
-                if (response.ok) {
-                    const workspaces = await response.json();
-                    displayWorkspaces(workspaces);
+
+                // Only scroll to bottom if we were at the bottom before
+                if (wasAtBottom) {
+                    messageList.scrollTop = messageList.scrollHeight;
+                }
+            }
+
+            // Update the chat click handler
+            async function handleChatClick(workspaceId, chatId, username) {
+                currentWorkspaceId = workspaceId;
+                currentChatId = chatId;
+                
+                // Update UI
+                document.getElementById('chatTitle').textContent = `@${username}`;
+                document.querySelectorAll('.chat-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                document.querySelector(`[data-chat-id="${chatId}"]`).classList.add('active');
+                
+                // Start message updates
+                startMessageUpdates();
+            }
+
+            // Clean up on page unload
+            window.addEventListener('beforeunload', () => {
+                stopMessageUpdates();
+                stopChatUpdates();
+            });
+
+            async function createWorkspace() {
+                const name = document.getElementById('workspaceName').value;
+                try {
+                    const response = await fetch('/api/workspaces/', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ name })
+                    });
                     
-                    // If there's a current workspace, update its name
-                    if (currentWorkspaceId) {
-                        const currentWorkspace = workspaces.find(w => w.id === currentWorkspaceId);
-                        if (currentWorkspace) {
-                            currentWorkspaceName = currentWorkspace.name;
+                    if (response.ok) {
+                        createWorkspaceModal.hide();
+                        document.getElementById('createWorkspaceForm').reset();
+                        await loadWorkspaces();
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    } else {
+                        const data = await response.json();
+                        alert(data.detail || 'Failed to create workspace');
+                    }
+                } catch (error) {
+                    console.error('Error creating workspace:', error);
+                    alert('An error occurred while creating workspace');
+                }
+            }
+
+            async function loadWorkspacesForBotModal() {
+                try {
+                    const response = await fetch('/api/workspaces/', {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const workspaces = await response.json();
+                        const select = document.getElementById('botWorkspace');
+                        select.innerHTML = workspaces.map(workspace =>
+                            `<option value="${workspace.id}">${workspace.name}</option>`
+                        ).join('');
+                    } else if (response.status === 401) {
+                        localStorage.removeItem('accessToken');
+                        window.location.replace('/auth');
+                    }
+                } catch (error) {
+                    console.error('Error loading workspaces for bot modal:', error);
+                }
+            }
+
+            async function addBot(workspaceId) {
+                const name = document.getElementById('botName').value;
+                const token = document.getElementById('botToken').value;
+                
+                if (!name || !token) {
+                    showError('Пожалуйста, заполните все поля');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/bots`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            name: name,
+                            token: token,
+                        }),
+                    });
+                    
+                    await handleError(response);
+                    await loadWorkspaces();  // Refresh workspace list
+                    
+                    // Clear form and close modal
+                    document.getElementById('botName').value = '';
+                    document.getElementById('botToken').value = '';
+                    addBotModal.hide();  // Use Bootstrap modal method to hide
+                    
+                } catch (error) {
+                    console.error('Error adding bot:', error);
+                }
+            }
+
+            function logout() {
+                localStorage.removeItem('accessToken');
+                window.location.replace('/auth');
+            }
+
+            async function handleError(response) {
+                if (!response.ok) {
+                    const error = await response.json();
+                    const message = error.detail || 'Произошла ошибка';
+                    showError(message);
+                    throw new Error(message);
+                }
+                return response;
+            }
+
+            function showError(message) {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-popup';
+                errorDiv.innerHTML = `
+                    <div class="error-content">
+                        <h4>Ошибка</h4>
+                        <p>${message}</p>
+                        <button onclick="this.parentElement.parentElement.remove()">Закрыть</button>
+                    </div>
+                `;
+                document.body.appendChild(errorDiv);
+            }
+
+            // Add currentWorkspaceName variable and update it when loading workspaces
+            let currentWorkspaceName = '';
+
+            // Start updates if there's already a selected chat when loading the page
+            if (currentWorkspaceId && currentChatId) {
+                startMessageUpdates();
+            }
+
+            async function loadWorkspacesForUserModal() {
+                try {
+                    const response = await fetch('/api/workspaces/', {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const workspaces = await response.json();
+                        const select = document.getElementById('userWorkspace');
+                        select.innerHTML = '<option value="">Select Workspace</option>' + 
+                            workspaces.map(workspace =>
+                                `<option value="${workspace.id}">${workspace.name}</option>`
+                            ).join('');
+                            
+                        // Load users for the first workspace if any
+                        if (workspaces.length > 0) {
+                            loadWorkspaceUsers(workspaces[0].id);
                         }
+                        
+                        // Add change handler for workspace select
+                        select.addEventListener('change', (e) => {
+                            if (e.target.value) {
+                                loadWorkspaceUsers(e.target.value);
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error loading workspaces:', error);
+                    showError('Ошибка при загрузке рабочих пространств');
+                }
+            }
+
+            async function loadWorkspaceUsers(workspaceId) {
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/users`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const users = await response.json();
+                        displayWorkspaceUsers(users, workspaceId);
+                    }
+                } catch (error) {
+                    console.error('Error loading workspace users:', error);
+                    showError('Ошибка при загрузке пользователей');
+                }
+            }
+
+            function displayWorkspaceUsers(users, workspaceId) {
+                const usersList = document.getElementById('workspaceUsersList');
+                usersList.innerHTML = users.map(user => `
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div>
+                            <span>${user.email}</span>
+                            ${user.is_owner ? '<span class="badge bg-primary ms-2">Owner</span>' : ''}
+                        </div>
+                        ${!user.is_owner ? `
+                            <button class="btn btn-sm btn-danger" onclick="removeUser('${workspaceId}', '${user.id}')">
+                                Remove
+                            </button>
+                        ` : ''}
+                    </div>
+                `).join('');
+            }
+
+            async function addUserToWorkspace(workspaceId, email) {
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/users`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ email })
+                    });
+                    
+                    if (response.ok) {
+                        // Clear input and reload users
+                        document.getElementById('userEmail').value = '';
+                        await loadWorkspaceUsers(workspaceId);
+                    } else {
+                        const error = await response.json();
+                        showError(error.detail || 'Ошибка при добавлении пользователя');
+                    }
+                } catch (error) {
+                    console.error('Error adding user:', error);
+                    showError('Ошибка при добавлении пользователя');
+                }
+            }
+
+            async function removeUser(workspaceId, userId) {
+                if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/users/${userId}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    if (response.ok) {
+                        await loadWorkspaceUsers(workspaceId);
+                    } else {
+                        const error = await response.json();
+                        showError(error.detail || 'Ошибка при удалении пользователя');
+                    }
+                } catch (error) {
+                    console.error('Error removing user:', error);
+                    showError('Ошибка при удалении пользователя');
+                }
+            }
+
+            function renderChat(chat) {
+                return `
+                    <div class="chat-item" data-chat-id="${chat.id}">
+                        ${chat.photo_data ? 
+                            `<img src="data:image/jpeg;base64,${chat.photo_data}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class='chat-avatar'><span class='chat-avatar-icon'></span></div>')">` :
+                            `<div class="chat-avatar"><span class="chat-avatar-icon"></span></div>`
+                        }
+                        <div class="chat-info">
+                            <div class="chat-name">
+                                @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                                ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
+                            </div>
+                            <div class="chat-last-message">${chat.last_message || 'No messages yet'}</div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Optimize image loading
+            const lazyLoadImages = () => {
+                const images = document.querySelectorAll('img[loading="lazy"]');
+                images.forEach(img => {
+                    if (img.complete) {
+                        img.classList.add('loaded');
+                    } else {
+                        img.addEventListener('load', () => img.classList.add('loaded'));
+                    }
+                });
+            };
+
+            document.addEventListener('DOMContentLoaded', lazyLoadImages);
+
+            function hexToBase64(hexstring) {
+                if (!hexstring) return null;
+                const bytes = new Uint8Array(hexstring.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                return btoa(String.fromCharCode.apply(null, bytes));
+            }
+
+            function displayChats(chats) {
+                const chatList = document.getElementById('chatList');
+                chatList.innerHTML = '';
+                
+                chats.forEach(chat => {
+                    const chatDiv = document.createElement('div');
+                    chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
+                    chatDiv.dataset.chatId = chat.id;
+                    chatDiv.dataset.workspaceId = chat.workspace_id;
+                    chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
+                    
+                    let lastMessageText = 'No messages';
+                    if (chat.last_message) {
+                        lastMessageText = chat.last_message.content.length > 50 
+                            ? chat.last_message.content.substring(0, 47) + '...'
+                            : chat.last_message.content;
                     }
                     
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
+                    chatDiv.innerHTML = `
+                        <div class="chat-avatar">
+                            ${chat.photo_data ? 
+                                `<img src="data:image/jpeg;base64,${hexToBase64(chat.photo_data)}" alt="@${chat.username}" loading="lazy" onerror="this.parentElement.innerHTML='<span class='chat-avatar-icon'></span>'">` :
+                                `<span class="chat-avatar-icon"></span>`
+                            }
+                        </div>
+                        <div class="chat-info">
+                            <div class="chat-name">
+                                @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                                ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
+                            </div>
+                            <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
+                        </div>
+                    `;
+                    
+                    chatDiv.addEventListener('click', async () => {
+                        console.log('Chat clicked:', {
+                            workspaceId: chat.workspace_id,
+                            chatId: chat.id,
+                            botId: chat.bot_id
+                        });
+
+                        // Remove active class from all chats
+                        document.querySelectorAll('.chat-item').forEach(item => {
+                            item.classList.remove('active');
+                        });
+                        
+                        // Add active class to clicked chat
+                        chatDiv.classList.add('active');
+                        
+                        // Update current chat, workspace, and bot IDs
+                        currentChatId = chat.id;
+                        currentWorkspaceId = chat.workspace_id;
+                        currentBotId = chat.bot_id;  // Ensure bot_id is assigned
+                        
+                        // Update chat title with bot name
+                        if (document.getElementById('chatTitle')) {
+                            document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
+                        }
+                        
+                        // Show loading animation for messages
+                        document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
+                        
+                        // Fetch messages for the selected chat
+                        await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
+                        
+                        // Mark as read
+                        if (chat.has_unread) {
+                            try {
+                                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/mark_read`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
+                                    }
+                                });
+                                
+                                if (response.ok) {
+                                    chatDiv.classList.remove('unread');
+                                    chatDiv.querySelector('.unread-badge')?.remove();
+                                }
+                            } catch (error) {
+                                console.error('Error marking chat as read:', error);
+                            }
+                        }
+                    });
+                    
+                    chatList.appendChild(chatDiv);
+                });
+            }
+
+            // Add styles to head
+            const style = document.createElement('style');
+            style.textContent = `
+                .chat-item.unread {
+                    background-color: #f0f7ff;
+                    font-weight: bold;
                 }
-            } catch (error) {
-                console.error('Error loading workspaces:', error);
-            }
-        }
+                .unread-badge {
+                    width: 8px;
+                    height: 8px;
+                    background-color: #0d6efd;
+                    border-radius: 50%;
+                    display: inline-block;
+                    margin-left: 5px;
+                }
+                .chat-time {
+                    font-size: 0.8em;
+                    color: #666;
+                }
+            `;
+            document.head.appendChild(style);
 
-        function displayWorkspaces(workspaces) {
-            const workspaceDropdown = document.getElementById('workspaceDropdown');
-            workspaceDropdown.innerHTML = workspaces.map(workspace => `
-                <option value="${workspace.id}">${workspace.name}</option>
-            `).join('');
-
-            // Load the first workspace by default
-            if (workspaces.length > 0) {
-                workspaceDropdown.value = workspaces[0].id;
-                loadChats(workspaces[0].id);
-            }
-
-            // Add change event listener
-            workspaceDropdown.addEventListener('change', (e) => {
+            // Stop chat updates when switching workspaces
+            document.getElementById('workspaceDropdown').addEventListener('change', (e) => {
+                stopChatUpdates();
                 const selectedWorkspaceId = e.target.value;
                 loadChats(selectedWorkspaceId);
             });
-        }
 
-        let chatUpdateInterval;
-
-        function startChatUpdates(workspaceId) {
-            stopChatUpdates();
-            chatUpdateInterval = setInterval(() => updateChats(workspaceId), 3000);
-        }
-
-        function stopChatUpdates() {
-            if (chatUpdateInterval) {
-                clearInterval(chatUpdateInterval);
-                chatUpdateInterval = null;
-            }
-        }
-
-        async function updateChats(workspaceId) {
-            if (!workspaceId) return;
-            
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                
-                if (response.ok) {
-                    const newChats = await response.json();
-                    
-                    // Compare with existing chats
-                    const currentChats = window.chats || [];
-                    const hasNewChats = newChats.length > currentChats.length;
-                    const hasUpdates = newChats.some((chat, index) => {
-                        const currentChat = currentChats[index];
-                        return !currentChat || 
-                            chat.has_unread !== currentChat.has_unread ||
-                            chat.last_message?.content !== currentChat.last_message?.content;
-                    });
-                    
-                    if (hasNewChats || hasUpdates) {
-                        window.chats = newChats;
-                        displayChats(newChats);
-                    }
-                }
-            } catch (error) {
-                console.error('Error updating chats:', error);
-            }
-        }
-
-        // Update loadChats function to start chat updates
-        async function loadChats(workspaceId) {
-            const chatList = document.getElementById('chatList');
-            chatList.innerHTML = '<div class="loading-spinner">Loading chats...</div>';
-            
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                if (response.ok) {
-                    const chats = await response.json();
-                    window.chats = chats;
-                    currentWorkspaceId = workspaceId;
-                    
-                    if (chats.length > 0 && !currentChatId) {
-                        currentChatId = chats[0].id;
-                        document.getElementById('chatTitle').textContent = `Chat with @${chats[0].username} (${chats[0].bot?.name || 'Unknown bot'})`;
-                        loadMessages(workspaceId, currentChatId);
-                    } else if (chats.length === 0) {
-                        chatList.innerHTML = '<div class="loading-text">No chats available</div>';
-                        document.getElementById('messageList').innerHTML = '';
-                        document.getElementById('chatTitle').textContent = 'No chats available';
-                        return;
-                    }
-                    
-                    displayChats(chats);
-                    startChatUpdates(workspaceId); // Start chat updates
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                }
-            } catch (error) {
-                console.error('Error loading chats:', error);
-                chatList.innerHTML = '<div class="loading-text text-danger">Error loading chats</div>';
-            }
-        }
-
-        // Debounce function
-        function debounce(func, wait) {
-            let timeout;
-            return function(...args) {
-                const context = this;
-                clearTimeout(timeout);
-                timeout = setTimeout(() => func.apply(context, args), wait);
-            };
-        }
-
-        // Virtual scrolling setup
-        const chatList = document.getElementById('chatList');
-        const messageList = document.getElementById('messageList');
-
-        function virtualScroll(container, items, renderItem) {
-            const itemHeight = 60; // Approximate height of each item
-            const buffer = 5; // Number of items to render above and below the viewport
-
-            function render() {
-                const scrollTop = container.scrollTop;
-                const containerHeight = container.clientHeight;
-                const totalHeight = items.length * itemHeight;
-                const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - buffer);
-                const endIndex = Math.min(items.length, Math.ceil((scrollTop + containerHeight) / itemHeight) + buffer);
-
-                const fragment = document.createDocumentFragment();
-                for (let i = startIndex; i < endIndex; i++) {
-                    const item = renderItem(items[i]);
-                    fragment.appendChild(item);
-                }
-                container.innerHTML = '';
-                container.appendChild(fragment);
-
-                // Adjust scroll position if at the bottom
-                if (scrollTop + containerHeight >= totalHeight - itemHeight) {
-                    container.scrollTop = totalHeight - containerHeight;
-                }
-            }
-
-            container.addEventListener('scroll', debounce(render, 50));
-            render();
-        }
-
-        // Ensure chat switching works
-        function displayChats(chats, workspaceId) {
-            chatList.innerHTML = '';
-            chats.forEach(chat => {
-                const chatDiv = document.createElement('div');
-                chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
-                chatDiv.dataset.chatId = chat.id;
-                chatDiv.dataset.workspaceId = chat.workspace_id;
-                chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
-                
-                let lastMessageText = 'No messages';
-                if (chat.last_message) {
-                    lastMessageText = chat.last_message.content.length > 50 
-                        ? chat.last_message.content.substring(0, 47) + '...'
-                        : chat.last_message.content;
-                }
-                
-                chatDiv.innerHTML = `
-                    <div class="chat-avatar">
-                        ${chat.photo_data ? 
-                            `<img src="data:image/jpeg;base64,${hexToBase64(chat.photo_data)}" alt="@${chat.username}" loading="lazy" onerror="this.parentElement.innerHTML='<span class=\'chat-avatar-icon\'></span>'">` :
-                            `<span class="chat-avatar-icon"></span>`
-                        }
-                    </div>
-                    <div class="chat-info">
-                        <div class="chat-name">
-                            @${chat.username} (${chat.bot?.name || 'Unknown bot'})
-                            ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
+            function renderChatList(chats) {
+                const chatList = document.getElementById('chatList');
+                chatList.innerHTML = '';
+                chats.forEach(chat => {
+                    const chatItem = document.createElement('div');
+                    chatItem.className = 'chat-item';
+                    chatItem.innerHTML = `
+                        <div class="chat-avatar">
+                            <span class="chat-avatar-icon"></span>
                         </div>
-                        <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
-                    </div>
-                `;
-                
-                chatDiv.addEventListener('click', async () => {
-                    console.log('Chat clicked:', {
-                        workspaceId: chat.workspace_id,
-                        chatId: chat.id,
-                        botId: chat.bot_id
-                    });
+                        <div class="chat-info">
+                            <div class="chat-name">${chat.username} (${chat.bot_id || 'Unknown bot'})</div>
+                            <div class="chat-last-message">${chat.last_message || 'No messages yet'}</div>
+                        </div>
+                    `;
+                    chatList.appendChild(chatItem);
+                });
+            }
 
-                    // Remove active class from all chats
-                    document.querySelectorAll('.chat-item').forEach(item => {
-                        item.classList.remove('active');
-                    });
-                    
-                    // Add active class to clicked chat
-                    chatDiv.classList.add('active');
-                    
-                    // Update current chat, workspace, and bot IDs
-                    currentChatId = chat.id;
-                    currentWorkspaceId = chat.workspace_id;
-                    currentBotId = chat.bot_id;  // Ensure bot_id is assigned
-                    
-                    // Update chat title with bot name
-                    document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
-                    
-                    // Show loading animation for messages
-                    document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
-                    
-                    // Fetch messages for the selected chat
-                    await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
-                    
-                    // Mark as read
-                    if (chat.has_unread) {
-                        try {
-                            const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/mark_read`, {
-                                method: 'POST',
-                                headers: {
-                                    'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
-                                }
-                            });
-                            
-                            if (response.ok) {
-                                chatDiv.classList.remove('unread');
-                                chatDiv.querySelector('.unread-badge')?.remove();
-                            }
-                        } catch (error) {
-                            console.error('Error marking chat as read:', error);
+            function showAnalysis() {
+                // Fetch and display analysis data for the current chat
+                const chatId = currentChatId;
+                const workspaceId = currentWorkspaceId;
+                fetch(`/api/workspaces/${workspaceId}/chats/${chatId}/analysis`)
+                    .then(response => response.json())
+                    .then(data => {
+                        alert(JSON.stringify(data, null, 2)); // Display analysis data in an alert for simplicity
+                    })
+                    .catch(error => console.error('Error fetching analysis:', error));
+            }
+
+            document.getElementById('aiButton').addEventListener('click', async function() {
+                try {
+                    const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/analysis`, {
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
                         }
-                    }
-                });
-                
-                chatList.appendChild(chatDiv);
-            });
-        }
-
-        let isLoadingMessages = false;
-        let messageUpdateInterval;
-        let currentLoadingChatId = null;
-
-        async function loadMessages(workspaceId, chatId, botId) {
-            // Validate IDs before making request
-            if (!workspaceId || !chatId || !botId) {
-                console.log('Invalid workspace, chat, or bot ID:', { workspaceId, chatId, botId });
-                document.getElementById('messageList').innerHTML = '<div class="loading-text">Please select a chat"</div>';
-                return;
-            }
-            
-            // Clear any existing message update interval
-            stopMessageUpdates();
-            
-            // If already loading messages for this chat, skip
-            if (isLoadingMessages && currentLoadingChatId === chatId) {
-                console.log('Already loading messages for this chat, skipping request');
-                return;
-            }
-            
-            try {
-                isLoadingMessages = true;
-                currentLoadingChatId = chatId;
-                
-                const response = await fetch(`/api/workspaces/${workspaceId}/chats/${chatId}/bots/${botId}/messages`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                
-                // Check if chat was switched while loading
-                if (currentChatId !== chatId) {
-                    console.log('Chat switched while loading messages, discarding results');
-                    return;
-                }
-                
-                if (response.ok) {
-                    const messages = await response.json();
+                    });
                     
-                    // Double check if we're still on the same chat after awaiting json
-                    if (currentChatId !== chatId) {
-                        console.log('Chat switched while parsing messages, discarding results');
-                        return;
-                    }
-                    
-                    if (messages.length === 0) {
-                        document.getElementById('messageList').innerHTML = '<div class="loading-text">No messages yet</div>';
+                    if (response.ok) {
+                        const data = await response.json();
+                        const formattedData = JSON.stringify(data.analysis_data, null, 2); // Format JSON with indentation
+                        document.getElementById('aiAnalysisContent').innerText = formattedData || 'No analysis available.';
                     } else {
-                        displayMessages(messages);
-                        startMessageUpdates();
-                    }
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                }
-            } catch (error) {
-                console.error('Error loading messages:', error);
-                if (currentChatId === chatId) {
-                    document.getElementById('messageList').innerHTML = '<div class="loading-text text-danger">Error loading messages</div>';
-                }
-            } finally {
-                isLoadingMessages = false;
-                if (currentLoadingChatId === chatId) {
-                    currentLoadingChatId = null;
-                }
-            }
-        }
-
-        function stopMessageUpdates() {
-            if (messageUpdateInterval) {
-                clearInterval(messageUpdateInterval);
-                messageUpdateInterval = null;
-            }
-        }
-
-        function startMessageUpdates() {
-            stopMessageUpdates();
-            messageUpdateInterval = setInterval(updateMessages, 3000);
-        }
-
-        async function updateMessages() {
-            if (!currentWorkspaceId || !currentChatId || isLoadingMessages) {
-                return;
-            }
-            
-            const chatId = currentChatId; // Store current chat ID for comparison
-            
-            try {
-                isLoadingMessages = true;
-                const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/bots/${currentBotId}/messages`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                
-                // Verify we're still on the same chat
-                if (currentChatId !== chatId) {
-                    return;
-                }
-                
-                if (response.ok) {
-                    const messages = await response.json();
-                    
-                    // Verify again after parsing JSON
-                    if (currentChatId !== chatId) {
-                        return;
+                        document.getElementById('aiAnalysisContent').innerText = 'Failed to fetch analysis.';
                     }
                     
-                    const messageList = document.getElementById('messageList');
-                    const currentMessages = Array.from(messageList.children)
-                        .filter(el => el.classList.contains('message'));
-                    
-                    if (messages.length > currentMessages.length) {
-                        displayMessages(messages);
-                    }
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
+                    const aiModal = new bootstrap.Modal(document.getElementById('aiModal'));
+                    aiModal.show();
+                } catch (error) {
+                    console.error('Error fetching analysis:', error);
+                    document.getElementById('aiAnalysisContent').innerText = 'Error fetching analysis.';
                 }
-            } catch (error) {
-                console.error('Error updating messages:', error);
-            } finally {
-                isLoadingMessages = false;
-            }
-        }
-
-        function displayMessages(messages) {
-            const messageList = document.getElementById('messageList');
-            messageList.dataset.currentChatId = currentChatId; // Store current chat ID
-            const wasAtBottom = messageList.scrollHeight - messageList.scrollTop === messageList.clientHeight;
-            
-            // Clear existing messages
-            messageList.innerHTML = '';
-            
-            // Add all messages
-            messages.forEach(message => {
-                const messageDiv = document.createElement('div');
-                messageDiv.className = `message ${message.direction === 'outgoing' ? 'message-outgoing' : 'message-incoming'}`;
-                messageDiv.dataset.chatId = currentChatId;
-                messageDiv.dataset.workspaceId = currentWorkspaceId;
-                messageDiv.innerHTML = `
-                    <div class="message-content">
-                        <div class="message-text">${message.content}</div>
-                        <div class="message-time">${new Date(message.sent_at).toLocaleString()}</div>
-                    </div>
-                `;
-                messageList.appendChild(messageDiv);
             });
-
-            // Only scroll to bottom if we were at the bottom before
-            if (wasAtBottom) {
-                messageList.scrollTop = messageList.scrollHeight;
-            }
-        }
-
-        // Update the chat click handler
-        async function handleChatClick(workspaceId, chatId, username) {
-            currentWorkspaceId = workspaceId;
-            currentChatId = chatId;
-            
-            // Update UI
-            document.getElementById('chatTitle').textContent = `@${username}`;
-            document.querySelectorAll('.chat-item').forEach(item => {
-                item.classList.remove('active');
-            });
-            document.querySelector(`[data-chat-id="${chatId}"]`).classList.add('active');
-            
-            // Start message updates
-            startMessageUpdates();
-        }
-
-        // Clean up on page unload
-        window.addEventListener('beforeunload', () => {
-            stopMessageUpdates();
-            stopChatUpdates();
         });
-
-        async function createWorkspace() {
-            const name = document.getElementById('workspaceName').value;
-            try {
-                const response = await fetch('/api/workspaces/', {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ name })
-                });
-                
-                if (response.ok) {
-                    createWorkspaceModal.hide();
-                    document.getElementById('createWorkspaceForm').reset();
-                    await loadWorkspaces();
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                } else {
-                    const data = await response.json();
-                    alert(data.detail || 'Failed to create workspace');
-                }
-            } catch (error) {
-                console.error('Error creating workspace:', error);
-                alert('An error occurred while creating workspace');
-            }
-        }
-
-        async function loadWorkspacesForBotModal() {
-            try {
-                const response = await fetch('/api/workspaces/', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                if (response.ok) {
-                    const workspaces = await response.json();
-                    const select = document.getElementById('botWorkspace');
-                    select.innerHTML = workspaces.map(workspace =>
-                        `<option value="${workspace.id}">${workspace.name}</option>`
-                    ).join('');
-                } else if (response.status === 401) {
-                    localStorage.removeItem('accessToken');
-                    window.location.replace('/auth');
-                }
-            } catch (error) {
-                console.error('Error loading workspaces for bot modal:', error);
-            }
-        }
-
-        async function addBot(workspaceId) {
-            const name = document.getElementById('botName').value;
-            const token = document.getElementById('botToken').value;
-            
-            if (!name || !token) {
-                showError('Пожалуйста, заполните все поля');
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/bots`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        name: name,
-                        token: token,
-                    }),
-                });
-                
-                await handleError(response);
-                await loadWorkspaces();  // Refresh workspace list
-                
-                // Clear form and close modal
-                document.getElementById('botName').value = '';
-                document.getElementById('botToken').value = '';
-                addBotModal.hide();  // Use Bootstrap modal method to hide
-                
-            } catch (error) {
-                console.error('Error adding bot:', error);
-            }
-        }
-
-        function logout() {
-            localStorage.removeItem('accessToken');
-            window.location.replace('/auth');
-        }
-
-        async function handleError(response) {
-            if (!response.ok) {
-                const error = await response.json();
-                const message = error.detail || 'Произошла ошибка';
-                showError(message);
-                throw new Error(message);
-            }
-            return response;
-        }
-
-        function showError(message) {
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'error-popup';
-            errorDiv.innerHTML = `
-                <div class="error-content">
-                    <h4>Ошибка</h4>
-                    <p>${message}</p>
-                    <button onclick="this.parentElement.parentElement.remove()">Закрыть</button>
-                </div>
-            `;
-            document.body.appendChild(errorDiv);
-        }
-
-        // Add currentWorkspaceName variable and update it when loading workspaces
-        let currentWorkspaceName = '';
-
-        // Start updates if there's already a selected chat when loading the page
-        if (currentWorkspaceId && currentChatId) {
-            startMessageUpdates();
-        }
-
-        async function loadWorkspacesForUserModal() {
-            try {
-                const response = await fetch('/api/workspaces/', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                if (response.ok) {
-                    const workspaces = await response.json();
-                    const select = document.getElementById('userWorkspace');
-                    select.innerHTML = '<option value="">Select Workspace</option>' + 
-                        workspaces.map(workspace =>
-                            `<option value="${workspace.id}">${workspace.name}</option>`
-                        ).join('');
-                        
-                    // Load users for the first workspace if any
-                    if (workspaces.length > 0) {
-                        loadWorkspaceUsers(workspaces[0].id);
-                    }
-                    
-                    // Add change handler for workspace select
-                    select.addEventListener('change', (e) => {
-                        if (e.target.value) {
-                            loadWorkspaceUsers(e.target.value);
-                        }
-                    });
-                }
-            } catch (error) {
-                console.error('Error loading workspaces:', error);
-                showError('Ошибка при загрузке рабочих пространств');
-            }
-        }
-
-        async function loadWorkspaceUsers(workspaceId) {
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/users`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                if (response.ok) {
-                    const users = await response.json();
-                    displayWorkspaceUsers(users, workspaceId);
-                }
-            } catch (error) {
-                console.error('Error loading workspace users:', error);
-                showError('Ошибка при загрузке пользователей');
-            }
-        }
-
-        function displayWorkspaceUsers(users, workspaceId) {
-            const usersList = document.getElementById('workspaceUsersList');
-            usersList.innerHTML = users.map(user => `
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <div>
-                        <span>${user.email}</span>
-                        ${user.is_owner ? '<span class="badge bg-primary ms-2">Owner</span>' : ''}
-                    </div>
-                    ${!user.is_owner ? `
-                        <button class="btn btn-sm btn-danger" onclick="removeUser('${workspaceId}', '${user.id}')">
-                            Remove
-                        </button>
-                    ` : ''}
-                </div>
-            `).join('');
-        }
-
-        async function addUserToWorkspace(workspaceId, email) {
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/users`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ email })
-                });
-                
-                if (response.ok) {
-                    // Clear input and reload users
-                    document.getElementById('userEmail').value = '';
-                    await loadWorkspaceUsers(workspaceId);
-                } else {
-                    const error = await response.json();
-                    showError(error.detail || 'Ошибка при добавлении пользователя');
-                }
-            } catch (error) {
-                console.error('Error adding user:', error);
-                showError('Ошибка при добавлении пользователя');
-            }
-        }
-
-        async function removeUser(workspaceId, userId) {
-            if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(`/api/workspaces/${workspaceId}/users/${userId}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
-                
-                if (response.ok) {
-                    await loadWorkspaceUsers(workspaceId);
-                } else {
-                    const error = await response.json();
-                    showError(error.detail || 'Ошибка при удалении пользователя');
-                }
-            } catch (error) {
-                console.error('Error removing user:', error);
-                showError('Ошибка при удалении пользователя');
-            }
-        }
-
-        function renderChat(chat) {
-            return `
-                <div class="chat-item" data-chat-id="${chat.id}">
-                    ${chat.photo_data ? 
-                        `<img src="data:image/jpeg;base64,${chat.photo_data}" alt="@${chat.username}" class="chat-avatar" onerror="this.parentElement.innerHTML=this.parentElement.innerHTML.replace(/<img[^>]*>/g,'<div class=\'chat-avatar\'><span class=\'chat-avatar-icon\'></span></div>')">` :
-                        `<div class="chat-avatar"><span class="chat-avatar-icon"></span></div>`
-                    }
-                    <div class="chat-info">
-                        <div class="chat-name">
-                            @${chat.username} (${chat.bot?.name || 'Unknown bot'})
-                            ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
-                        </div>
-                        <div class="chat-last-message">${chat.last_message?.content || 'No messages yet'}</div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Optimize image loading
-        const lazyLoadImages = () => {
-            const images = document.querySelectorAll('img[loading="lazy"]');
-            images.forEach(img => {
-                if (img.complete) {
-                    img.classList.add('loaded');
-                } else {
-                    img.addEventListener('load', () => img.classList.add('loaded'));
-                }
-            });
-        };
-
-        document.addEventListener('DOMContentLoaded', lazyLoadImages);
-
-        function hexToBase64(hexstring) {
-            if (!hexstring) return null;
-            const bytes = new Uint8Array(hexstring.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-            return btoa(String.fromCharCode.apply(null, bytes));
-        }
-
-        function displayChats(chats) {
-            const chatList = document.getElementById('chatList');
-            chatList.innerHTML = '';
-            
-            chats.forEach(chat => {
-                const chatDiv = document.createElement('div');
-                chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
-                chatDiv.dataset.chatId = chat.id;
-                chatDiv.dataset.workspaceId = chat.workspace_id;
-                chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
-                
-                let lastMessageText = 'No messages';
-                if (chat.last_message) {
-                    lastMessageText = chat.last_message.content.length > 50 
-                        ? chat.last_message.content.substring(0, 47) + '...'
-                        : chat.last_message.content;
-                }
-                
-                chatDiv.innerHTML = `
-                    <div class="chat-avatar">
-                        ${chat.photo_data ? 
-                            `<img src="data:image/jpeg;base64,${hexToBase64(chat.photo_data)}" alt="@${chat.username}" loading="lazy" onerror="this.parentElement.innerHTML='<span class=\'chat-avatar-icon\'></span>'">` :
-                            `<span class="chat-avatar-icon"></span>`
-                        }
-                    </div>
-                    <div class="chat-info">
-                        <div class="chat-name">
-                            @${chat.username} (${chat.bot?.name || 'Unknown bot'})
-                            ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
-                        </div>
-                        <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
-                    </div>
-                `;
-                
-                chatDiv.addEventListener('click', async () => {
-                    console.log('Chat clicked:', {
-                        workspaceId: chat.workspace_id,
-                        chatId: chat.id,
-                        botId: chat.bot_id
-                    });
-
-                    // Remove active class from all chats
-                    document.querySelectorAll('.chat-item').forEach(item => {
-                        item.classList.remove('active');
-                    });
-                    
-                    // Add active class to clicked chat
-                    chatDiv.classList.add('active');
-                    
-                    // Update current chat, workspace, and bot IDs
-                    currentChatId = chat.id;
-                    currentWorkspaceId = chat.workspace_id;
-                    currentBotId = chat.bot_id;  // Ensure bot_id is assigned
-                    
-                    // Update chat title with bot name
-                    document.getElementById('chatTitle').textContent = `Chat with @${chat.username} (${chat.bot?.name || 'Unknown bot'})`;
-                    
-                    // Show loading animation for messages
-                    document.getElementById('messageList').innerHTML = '<div class="loading-spinner">Loading messages...</div>';
-                    
-                    // Fetch messages for the selected chat
-                    await loadMessages(currentWorkspaceId, currentChatId, currentBotId);
-                    
-                    // Mark as read
-                    if (chat.has_unread) {
-                        try {
-                            const response = await fetch(`/api/workspaces/${currentWorkspaceId}/chats/${currentChatId}/mark_read`, {
-                                method: 'POST',
-                                headers: {
-                                    'Authorization': `Bearer ${localStorage.getItem('accessToken')}`
-                                }
-                            });
-                            
-                            if (response.ok) {
-                                chatDiv.classList.remove('unread');
-                                chatDiv.querySelector('.unread-badge')?.remove();
-                            }
-                        } catch (error) {
-                            console.error('Error marking chat as read:', error);
-                        }
-                    }
-                });
-                
-                chatList.appendChild(chatDiv);
-            });
-        }
-
-        // Add styles to head
-        const style = document.createElement('style');
-        style.textContent = `
-            .chat-item.unread {
-                background-color: #f0f7ff;
-                font-weight: bold;
-            }
-            .unread-badge {
-                width: 8px;
-                height: 8px;
-                background-color: #0d6efd;
-                border-radius: 50%;
-                display: inline-block;
-                margin-left: 5px;
-            }
-            .chat-time {
-                font-size: 0.8em;
-                color: #666;
-            }
-        `;
-        document.head.appendChild(style);
-
-        // Stop chat updates when switching workspaces
-        document.getElementById('workspaceDropdown').addEventListener('change', (e) => {
-            stopChatUpdates();
-            const selectedWorkspaceId = e.target.value;
-            loadChats(selectedWorkspaceId);
-        });
-
-        function renderChatList(chats) {
-            const chatList = document.getElementById('chatList');
-            chatList.innerHTML = '';
-            chats.forEach(chat => {
-                const chatItem = document.createElement('div');
-                chatItem.className = 'chat-item';
-                chatItem.innerHTML = `
-                    <div class="chat-avatar">
-                        <span class="chat-avatar-icon"></span>
-                    </div>
-                    <div class="chat-info">
-                        <div class="chat-name">${chat.username} (${chat.bot_id || 'Unknown bot'})</div>
-                        <div class="chat-last-message">${chat.last_message || 'No messages yet'}</div>
-                    </div>
-                `;
-                chatList.appendChild(chatItem);
-            });
-        }
     </script>
 </body>
 </html>

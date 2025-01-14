@@ -2,22 +2,25 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from uuid import UUID, uuid4
 import logging
+import uuid
 
-from sqlalchemy import ForeignKey, String, DateTime, Integer, Boolean, JSON, BigInteger, func, LargeBinary, Text
+from sqlalchemy import ForeignKey, String, DateTime, Integer, Boolean, JSON, BigInteger, func, LargeBinary, Text, Column, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Enum
+from sqlalchemy.dialects.postgresql import UUID as SQLAlchemyUUID
 
 from src.chat_system.db.base import Base
 from src.chat_system.db.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 class Message(Base):
     """Message model"""
     __tablename__ = "messages"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    chat_id: Mapped[UUID] = mapped_column(ForeignKey("chats.id"))
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chats.id"))
     content: Mapped[str] = mapped_column(Text)
     sent_at: Mapped[datetime] = mapped_column(DateTime)
     direction: Mapped[MessageDirection] = mapped_column(Enum(MessageDirection))
@@ -41,7 +44,7 @@ class User(Base):
     """User model"""
     __tablename__ = "users"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(255))
@@ -58,9 +61,9 @@ class Workspace(Base):
     """Workspace model"""
     __tablename__ = "workspaces"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255))
-    owner_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -73,16 +76,16 @@ class Workspace(Base):
 class WorkspaceUser(Base):
     __tablename__ = "workspace_users"
 
-    workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"), primary_key=True)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 class Bot(Base):
     """Bot model"""
     __tablename__ = "bots"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"))
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"))
     token: Mapped[str] = mapped_column(String(255), unique=True)
     name: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -97,9 +100,9 @@ class Chat(Base):
     """Chat model"""
     __tablename__ = "chats"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    workspace_id: Mapped[UUID] = mapped_column(ForeignKey("workspaces.id"))
-    bot_id: Mapped[UUID] = mapped_column(ForeignKey("bots.id"))
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"))
+    bot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bots.id"))
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(255))
     photo_data: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
@@ -118,6 +121,7 @@ class Chat(Base):
         viewonly=True,
         uselist=False
     )
+    analysis_results: Mapped[List["AnalysisResult"]] = relationship("AnalysisResult", back_populates="chat")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert chat to dictionary"""
@@ -139,3 +143,13 @@ class Chat(Base):
             result["last_message"] = self.last_message.to_dict()
         
         return result 
+
+class AnalysisResult(Base):
+    __tablename__ = 'analysis_results'
+
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(SQLAlchemyUUID(as_uuid=True), ForeignKey('chats.id'), nullable=False, index=True)
+    workspace_id = Column(SQLAlchemyUUID(as_uuid=True), nullable=False, index=True)
+    analysis_data = Column(JSON, nullable=False)
+
+    chat = relationship('Chat', back_populates='analysis_results') 

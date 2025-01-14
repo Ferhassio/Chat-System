@@ -14,6 +14,7 @@ from src.chat_system.core.config import settings
 from src.chat_system.db.models import Base
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)
 
 class Database:
     def __init__(self):
