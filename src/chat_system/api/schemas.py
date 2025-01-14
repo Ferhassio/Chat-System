@@ -6,6 +6,8 @@ import base64
 
 from pydantic import BaseModel, EmailStr
 
+from src.chat_system.db.models import Chat
+
 class MessageDirection(str, Enum):
     INCOMING = "incoming"
     OUTGOING = "outgoing"
@@ -81,50 +83,14 @@ class ChatBase(BaseModel):
     telegram_id: int
     username: str
     last_message_at: Optional[datetime] = None
-    photo_data: Optional[str] = None  # Base64 encoded photo data
-    photo_url: Optional[str] = None  # Deprecated, kept for backward compatibility
-    bot_id: UUID  # Add bot_id field
+    photo_data: Optional[str] = None
+    bot_id: UUID
 
 class ChatCreate(ChatBase):
     workspace_id: UUID
 
 class ChatUpdate(ChatBase):
     pass
-
-class ChatResponse(ChatBase):
-    id: UUID
-    workspace_id: UUID
-    last_message: Optional[Dict] = None
-
-    class Config:
-        from_attributes = True
-        
-    @classmethod
-    def from_orm(cls, obj):
-        # Convert photo_data bytes to base64 string if present
-        if hasattr(obj, 'photo_data') and obj.photo_data:
-            # Create a copy of the object to avoid modifying the original
-            obj_dict = {
-                'id': obj.id,
-                'workspace_id': obj.workspace_id,
-                'bot_id': obj.bot_id,  # Add bot_id field
-                'telegram_id': obj.telegram_id,
-                'username': obj.username,
-                'last_message_at': obj.last_message_at,
-                'photo_url': obj.photo_url,
-                'photo_data': base64.b64encode(obj.photo_data).decode('utf-8'),
-                'last_message': None
-            }
-            # Add last_message if it exists
-            if hasattr(obj, 'last_message') and obj.last_message:
-                obj_dict['last_message'] = {
-                    'id': obj.last_message.id,
-                    'content': obj.last_message.content,
-                    'direction': obj.last_message.direction,
-                    'sent_at': obj.last_message.sent_at
-                }
-            return cls(**obj_dict)
-        return super().from_orm(obj)
 
 class MessageBase(BaseModel):
     content: str
@@ -139,4 +105,38 @@ class MessageResponse(MessageBase):
     direction: MessageDirection
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+class ChatResponse(BaseModel):
+    """Chat response schema"""
+    id: UUID
+    workspace_id: UUID
+    bot_id: UUID
+    telegram_id: int
+    username: str
+    photo_data: Optional[str] = None
+    has_unread: bool = False
+    last_message_at: Optional[datetime] = None
+    last_message: Optional[MessageResponse] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_orm(cls, obj: Chat) -> "ChatResponse":
+        """Convert Chat model to ChatResponse"""
+        return cls(
+            id=obj.id,
+            workspace_id=obj.workspace_id,
+            bot_id=obj.bot_id,
+            telegram_id=obj.telegram_id,
+            username=obj.username,
+            photo_data=obj.photo_data.hex() if obj.photo_data else None,
+            has_unread=obj.has_unread,
+            last_message_at=obj.last_message_at,
+            last_message=MessageResponse.from_orm(obj.last_message) if obj.last_message else None,
+            created_at=obj.created_at,
+            updated_at=obj.updated_at
+        ) 

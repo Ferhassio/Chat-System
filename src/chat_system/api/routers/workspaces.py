@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload, contains_eager
 
 from src.chat_system.api.deps import get_current_user, get_session
 from src.chat_system.api.schemas import (
@@ -239,8 +239,9 @@ async def get_chats(
     # Get chats with telegram profiles, bots and last messages
     result = await session.execute(
         select(Chat)
+        .outerjoin(Chat.last_message)
         .options(
-            joinedload(Chat.last_message),
+            contains_eager(Chat.last_message),
             joinedload(Chat.bot)
         )
         .where(Chat.workspace_id == workspace_id)
@@ -481,4 +482,41 @@ async def remove_workspace_user(
     await session.delete(workspace_user)
     await session.commit()
 
-    return {"status": "success"} 
+    return {"status": "success"}
+
+@router.post("/{workspace_id}/chats/{chat_id}/mark_read", response_model=ChatResponse)
+async def mark_chat_read(
+    workspace_id: UUID,
+    chat_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ChatResponse:
+    """Mark chat as read"""
+    # Check workspace access
+    workspace = await get_workspace_or_404(session, workspace_id, current_user)
+    
+    # Get chat with last message
+    result = await session.execute(
+        select(Chat)
+        .outerjoin(Chat.last_message)
+        .options(
+            contains_eager(Chat.last_message),
+            joinedload(Chat.bot)
+        )
+        .where(
+            Chat.id == chat_id,
+            Chat.workspace_id == workspace_id
+        )
+    )
+    chat = result.unique().scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    
+    # Mark as read and prepare response before commit
+    chat.has_unread = False
+    response = ChatResponse.from_orm(chat)
+    
+    # Commit changes
+    await session.commit()
+    
+    return response 

@@ -102,8 +102,9 @@ class MessageProcessor:
             direction=MessageDirection.INCOMING
         )
         
-        # Update chat's last message
+        # Update chat's last message and set unread flag
         chat.last_message_at = sent_at.replace(tzinfo=None)
+        chat.has_unread = True
         
         self._session.add(message)
         await self._session.flush()

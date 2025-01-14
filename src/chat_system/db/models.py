@@ -1,15 +1,41 @@
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Dict, Any, List, Optional
 from uuid import UUID, uuid4
 import logging
 
-from sqlalchemy import ForeignKey, String, DateTime, Integer, Boolean, JSON, BigInteger, func, LargeBinary
+from sqlalchemy import ForeignKey, String, DateTime, Integer, Boolean, JSON, BigInteger, func, LargeBinary, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import Enum
 
 from src.chat_system.db.base import Base
 from src.chat_system.db.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
+
+class Message(Base):
+    """Message model"""
+    __tablename__ = "messages"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    chat_id: Mapped[UUID] = mapped_column(ForeignKey("chats.id"))
+    content: Mapped[str] = mapped_column(Text)
+    sent_at: Mapped[datetime] = mapped_column(DateTime)
+    direction: Mapped[MessageDirection] = mapped_column(Enum(MessageDirection))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    # Relationships
+    chat: Mapped["Chat"] = relationship(back_populates="messages")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert message to dictionary"""
+        return {
+            "id": str(self.id),
+            "chat_id": str(self.chat_id),
+            "content": self.content,
+            "sent_at": self.sent_at.isoformat(),
+            "direction": self.direction.value,
+            "created_at": self.created_at.isoformat(),
+        }
 
 class User(Base):
     """User model"""
@@ -76,8 +102,8 @@ class Chat(Base):
     bot_id: Mapped[UUID] = mapped_column(ForeignKey("bots.id"))
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     username: Mapped[str] = mapped_column(String(255))
-    photo_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     photo_data: Mapped[Optional[bytes]] = mapped_column(LargeBinary, nullable=True)
+    has_unread: Mapped[bool] = mapped_column(Boolean, default=False, server_default='false')
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -85,17 +111,12 @@ class Chat(Base):
     # Relationships
     workspace: Mapped[Workspace] = relationship(back_populates="chats")
     bot: Mapped[Bot] = relationship(back_populates="chats")
-    messages: Mapped[List["Message"]] = relationship(
-        back_populates="chat",
-        cascade="all, delete-orphan",
-        order_by="Message.sent_at.desc()",
-        overlaps="last_message"
-    )
-    last_message: Mapped[Optional["Message"]] = relationship(
+    messages: Mapped[List[Message]] = relationship(back_populates="chat", order_by="Message.sent_at")
+    last_message: Mapped[Optional[Message]] = relationship(
         "Message",
-        primaryjoin="and_(Chat.id == Message.chat_id, "
-                   "Chat.last_message_at == Message.sent_at)",
-        overlaps="messages"
+        primaryjoin="and_(Chat.id == Message.chat_id, Chat.last_message_at == Message.sent_at)",
+        viewonly=True,
+        uselist=False
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -108,6 +129,7 @@ class Chat(Base):
             "username": self.username,
             "photo_url": None,  # Deprecated
             "photo_data": self.photo_data.hex() if self.photo_data else None,
+            "has_unread": self.has_unread,
             "last_message_at": self.last_message_at.isoformat() if self.last_message_at else None,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -116,29 +138,4 @@ class Chat(Base):
         if self.last_message:
             result["last_message"] = self.last_message.to_dict()
         
-        return result
-
-class Message(Base):
-    """Message model"""
-    __tablename__ = "messages"
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    chat_id: Mapped[UUID] = mapped_column(ForeignKey("chats.id"))
-    content: Mapped[str] = mapped_column(String)
-    direction: Mapped[str] = mapped_column(String(50))
-    sent_at: Mapped[datetime] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    # Relationships
-    chat: Mapped[Chat] = relationship(back_populates="messages", overlaps="last_message")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert message to dictionary"""
-        return {
-            "id": str(self.id),
-            "content": self.content,
-            "sent_at": self.sent_at.isoformat(),
-            "direction": self.direction,
-            "chat_id": str(self.chat_id)
-        } 
+        return result 
