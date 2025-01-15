@@ -6,13 +6,71 @@
     <title>Chat System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .navbar {
+            background-color: transparent;
+            border-bottom: none;
+        }
+        .navbar .navbar-brand {
+            color: #333;
+            font-size: 1.8em;
+            font-family: 'Arial', sans-serif;
+        }
+        .card {
+            background-color: #ffffff;
+            border: 1px solid #dee2e6;
+        }
+        .card-header {
+            background-color: #ffffff;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+        }
+        .ai-button {
+            background-color: #007bff;
+            color: white;
+        }
+        .ai-button:hover {
+            background-color: #0056b3;
+        }
+        .chat-item.active {
+            background-color: #e9ecef;
+        }
+        .chat-item.unread {
+            background-color: #f0f7ff;
+        }
+        .unread-badge {
+            background-color: #007bff;
+        }
+        .message-incoming .message-content {
+            background-color: #e9ecef;
+        }
+        .message-outgoing .message-content {
+            background-color: #007bff;
+            color: white;
+        }
         .chat-list, .message-list {
-            height: calc(100vh - 200px);
+            height: calc(100vh - 150px);
             overflow-y: auto;
         }
+        .col-6 .card-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
         .message-list {
-            height: calc(100vh - 200px);
+            flex: 1;
             overflow-y: auto;
+            max-height: calc(100vh - 250px);
         }
         .chat-item {
             cursor: pointer;
@@ -251,8 +309,18 @@
         }
         .navbar .three-dots {
             font-size: 1.5em;
-            color: #e9ecef;
+            color: #333;
             cursor: pointer;
+            background-color: #e9ecef;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .navbar .three-dots:hover {
+            background-color: #d6d8db;
         }
         .input-group {
             display: flex;
@@ -273,6 +341,10 @@
             flex-direction: column;
             justify-content: space-between;
         }
+        .message-list {
+            flex: 1;
+            overflow-y: auto;
+        }
         .input-group {
             display: flex;
             align-items: flex-end;
@@ -280,12 +352,19 @@
         #messageInput {
             resize: vertical;
         }
+        #placeholderMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
-            <a class="navbar-brand" href="#">Chat System</a>
+            <a class="navbar-brand" href="#">ASKA SP</a>
             <div class="dropdown ms-auto">
                 <span class="three-dots" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">⋮</span>
                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
@@ -342,8 +421,8 @@
                     <div class="card-header">
                         <h5 class="card-title mb-0">Recommendations</h5>
                     </div>
-                    <div class="card-body">
-                        <!-- Recommendations content will be added here -->
+                    <div class="card-body" id="recommendationsContent">
+                        <p class="text-center text-muted">No recommendations available.</p>
                     </div>
                 </div>
             </div>
@@ -467,6 +546,10 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <div id="placeholderMessage" class="text-center">
+        <h4>Please select a chat to view messages and recommendations.</h4>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
@@ -1344,7 +1427,8 @@
                             </div>
                             <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
                         </div>
-                    `;
+                    </div>
+                `;
                     
                     chatDiv.addEventListener('click', async () => {
                         console.log('Chat clicked:', {
@@ -1535,6 +1619,43 @@
                     }
                 }
             }
+
+            const chatTitleSection = document.querySelector('.col-6');
+            const recommendationsSection = document.querySelector('.col-3:nth-child(3)');
+            const placeholderMessage = document.getElementById('placeholderMessage');
+
+            function toggleVisibility() {
+                if (!currentChatId) {
+                    chatTitleSection.style.display = 'none';
+                    recommendationsSection.style.display = 'none';
+                    placeholderMessage.style.display = 'block';
+                } else {
+                    chatTitleSection.style.display = 'block';
+                    recommendationsSection.style.display = 'block';
+                    placeholderMessage.style.display = 'none';
+                }
+            }
+
+            // Initial check
+            toggleVisibility();
+
+            // Update visibility when a chat is selected
+            document.getElementById('chatList').addEventListener('click', function() {
+                toggleVisibility();
+            });
+
+            function updateRecommendations(recommendations) {
+                const recommendationsContent = document.getElementById('recommendationsContent');
+                if (!recommendations || recommendations.length === 0) {
+                    recommendationsContent.innerHTML = '<p class="text-center text-muted">No recommendations available.</p>';
+                } else {
+                    // Populate recommendations
+                    recommendationsContent.innerHTML = recommendations.map(rec => `<p>${rec}</p>`).join('');
+                }
+            }
+
+            // Initial call to display placeholder
+            updateRecommendations();
         });
     </script>
 </body>
