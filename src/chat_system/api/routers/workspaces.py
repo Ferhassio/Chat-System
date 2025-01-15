@@ -24,7 +24,7 @@ from src.chat_system.telegram.manager import telegram_manager
 
 router = APIRouter()
 logging.basicConfig()
-# For debugging
+
 logging.getLogger('sqlalchemy.engine.Engine').disabled = True
 
 

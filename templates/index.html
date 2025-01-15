@@ -868,11 +868,12 @@
             function displayChats(chats, workspaceId) {
                 chatList.innerHTML = '';
                 chats.forEach(chat => {
+                    const botIdPart = chat.bot_id ? chat.bot_id.split('-').pop() : 'Unknown';
                     const chatDiv = document.createElement('div');
                     chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
                     chatDiv.dataset.chatId = chat.id;
                     chatDiv.dataset.workspaceId = chat.workspace_id;
-                    chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
+                    chatDiv.dataset.botId = chat.bot_id;
                     
                     let lastMessageText = 'No messages';
                     if (chat.last_message) {
@@ -890,7 +891,7 @@
                         </div>
                         <div class="chat-info">
                             <div class="chat-name">
-                                @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                                @${chat.username} (b_${botIdPart})
                                 ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
                             </div>
                             <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
@@ -1400,11 +1401,12 @@
                 chatList.innerHTML = '';
                 
                 chats.forEach(chat => {
+                    const botIdPart = chat.bot_id ? chat.bot_id.split('-').pop() : 'Unknown';
                     const chatDiv = document.createElement('div');
                     chatDiv.className = `chat-item ${chat.has_unread ? 'unread' : ''}`;
                     chatDiv.dataset.chatId = chat.id;
                     chatDiv.dataset.workspaceId = chat.workspace_id;
-                    chatDiv.dataset.botId = chat.bot_id;  // Ensure bot_id is assigned
+                    chatDiv.dataset.botId = chat.bot_id;
                     
                     let lastMessageText = 'No messages';
                     if (chat.last_message) {
@@ -1422,7 +1424,7 @@
                         </div>
                         <div class="chat-info">
                             <div class="chat-name">
-                                @${chat.username} (${chat.bot?.name || 'Unknown bot'})
+                                @${chat.username} (b_${botIdPart})
                                 ${chat.has_unread ? '<span class="unread-badge"></span>' : ''}
                             </div>
                             <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
