@@ -359,12 +359,48 @@
             transform: translate(-50%, -50%);
             color: #6c757d;
         }
+        .profile-button {
+            background-color: #007bff;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            margin-left: 10px;
+            transition: background-color 0.2s;
+        }
+        .profile-button:hover {
+            background-color: #0056b3;
+        }
+        .profile-button-icon {
+            color: white;
+            font-size: 18px;
+        }
+        .profile-button svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+        .navbar-brand img {
+            height: 40px;
+            width: auto;
+        }
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-left: auto;
+        }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
-            <a class="navbar-brand" href="#">ASKA SP</a>
+            <a class="navbar-brand" href="#">
+                <img src="/static/images/logo.png" alt="ASKA SP">
+            </a>
             <div class="dropdown ms-auto">
                 <span class="three-dots" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">⋮</span>
                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
@@ -401,7 +437,16 @@
                 <div class="card">
                     <div class="card-header d-flex align-items-center">
                         <h5 class="mb-0">Chat Title</h5>
-                        <button class="ai-button" id="aiButton">AI</button>
+                        <div class="button-group">
+                            <button class="profile-button" id="aiButton">
+                                <svg viewBox="0 0 24 24">
+                                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                                </svg>
+                            </button>
+                            <button class="profile-button" id="secondaryButton">
+                                <img src="/static/images/button_ico.png" alt="Action" style="width: 20px; height: 20px;">
+                            </button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div class="message-list mb-3" id="messageList">
@@ -514,7 +559,7 @@
                     </form>
                     
                     <div class="workspace-users">
-                        <h6>Current Users</h6>
+                        <h6>Пользователи</h6>
                         <div id="workspaceUsersList">
                             <!-- Users will be listed here -->
                         </div>
@@ -560,6 +605,30 @@
             let currentChatId = null;
             let currentBotId = null;
             const accessToken = localStorage.getItem('accessToken');
+
+            // Make removeWorkspaceUser globally available
+            window.removeWorkspaceUser = async function(workspaceId, userId) {
+                if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/users/${userId}`, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    if (response.ok) {
+                        await loadWorkspaceUsers(workspaceId);
+                    } else {
+                        const error = await response.json();
+                        showError(error.detail || 'Ошибка при удалении пользователя');
+                    }
+                } catch (error) {
+                    console.error('Error removing user:', error);
+                    showError('Ошибка при удалении пользователя');
+                }
+            };
 
             // Check authentication
             if (!accessToken) {
@@ -784,40 +853,60 @@
 
             // Update loadChats function to start chat updates
             async function loadChats(workspaceId) {
+                if (!workspaceId) return;
+                
+                // Stop previous updates before starting new ones
+                stopChatUpdates();
+                
+                // Reset current state
+                currentChatId = null;
+                currentBotId = null;
+                
                 const chatList = document.getElementById('chatList');
+                if (!chatList) return;
+                
                 chatList.innerHTML = '<div class="loading-spinner">Loading chats...</div>';
                 
                 try {
                     const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
                         headers: { 'Authorization': `Bearer ${accessToken}` }
                     });
+                    
                     if (response.ok) {
                         const chats = await response.json();
                         window.chats = chats;
                         currentWorkspaceId = workspaceId;
                         
-                        if (chats.length > 0 && !currentChatId) {
-                            currentChatId = chats[0].id;
-                            if (document.getElementById('chatTitle')) {
-                                document.getElementById('chatTitle').textContent = `Chat with @${chats[0].username} (${chats[0].bot?.name || 'Unknown bot'})`;
-                            }
-                            loadMessages(workspaceId, currentChatId);
-                        } else if (chats.length === 0) {
+                        // Clear message list and update visibility
+                        const messageList = document.getElementById('messageList');
+                        if (messageList) {
+                            messageList.innerHTML = '';
+                        }
+                        
+                        // Update chat title
+                        const chatTitle = document.querySelector('.card-header h5.mb-0');
+                        if (chatTitle) {
+                            chatTitle.textContent = 'Chat Title';
+                        }
+                        
+                        if (chats.length === 0) {
                             chatList.innerHTML = '<div class="loading-text">No chats available</div>';
-                            document.getElementById('messageList').innerHTML = '';
-                            document.getElementById('chatTitle').textContent = 'No chats available';
+                            toggleVisibility(); // Hide chat sections when no chats
                             return;
                         }
                         
                         displayChats(chats);
-                        startChatUpdates(workspaceId); // Start chat updates
+                        startChatUpdates(workspaceId);
+                        
                     } else if (response.status === 401) {
                         localStorage.removeItem('accessToken');
                         window.location.replace('/auth');
                     }
                 } catch (error) {
                     console.error('Error loading chats:', error);
-                    chatList.innerHTML = '<div class="loading-text text-danger">Error loading chats</div>';
+                    if (chatList) {
+                        chatList.innerHTML = '<div class="loading-text text-danger">Error loading chats</div>';
+                    }
                 }
             }
 
@@ -1299,10 +1388,12 @@
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <div>
                             <span>${user.email}</span>
-                            ${user.is_owner ? '<span class="badge bg-primary ms-2">Owner</span>' : ''}
+                            <span class="badge bg-${user.is_owner ? 'primary' : 'secondary'} ms-2">
+                                ${user.is_owner ? 'Owner' : 'User'}
+                            </span>
                         </div>
                         ${!user.is_owner ? `
-                            <button class="btn btn-sm btn-danger" onclick="removeUser('${workspaceId}', '${user.id}')">
+                            <button class="btn btn-sm btn-danger" onclick="removeWorkspaceUser('${workspaceId}', '${user.id}')">
                                 Remove
                             </button>
                         ` : ''}
@@ -1332,29 +1423,6 @@
                 } catch (error) {
                     console.error('Error adding user:', error);
                     showError('Ошибка при добавлении пользователя');
-                }
-            }
-
-            async function removeUser(workspaceId, userId) {
-                if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) {
-                    return;
-                }
-                
-                try {
-                    const response = await fetch(`/api/workspaces/${workspaceId}/users/${userId}`, {
-                        method: 'DELETE',
-                        headers: { 'Authorization': `Bearer ${accessToken}` }
-                    });
-                    
-                    if (response.ok) {
-                        await loadWorkspaceUsers(workspaceId);
-                    } else {
-                        const error = await response.json();
-                        showError(error.detail || 'Ошибка при удалении пользователя');
-                    }
-                } catch (error) {
-                    console.error('Error removing user:', error);
-                    showError('Ошибка при удалении пользователя');
                 }
             }
 
@@ -1579,13 +1647,13 @@
                 // General Information
                 const generalInfoDiv = document.createElement('div');
                 generalInfoDiv.className = 'general-info';
-                generalInfoDiv.textContent = jsonData.client_summary || 'Insufficient data for general information';
+                generalInfoDiv.textContent = jsonData.client_summary || 'Недостаточно данных для анализа';
                 clientCard.appendChild(generalInfoDiv);
 
                 // Name and Surname
                 const nameDiv = document.createElement('div');
                 nameDiv.className = 'name-info';
-                const name = jsonData.client_name_from_chat || 'Insufficient data for name';
+                const name = jsonData.client_name_from_chat || 'Имя не на';
                 nameDiv.textContent = `Name: ${name}`;
                 clientCard.appendChild(nameDiv);
 
@@ -1658,6 +1726,56 @@
 
             // Initial call to display placeholder
             updateRecommendations();
+
+            // Update workspace dropdown handler
+            document.getElementById('workspaceDropdown').addEventListener('change', (e) => {
+                stopChatUpdates();
+                stopMessageUpdates();
+                const selectedWorkspaceId = e.target.value;
+                if (selectedWorkspaceId) {
+                    loadChats(selectedWorkspaceId);
+                }
+            });
+
+            function startChatUpdates(workspaceId) {
+                stopChatUpdates();
+                if (workspaceId) {
+                    chatUpdateInterval = setInterval(() => updateChats(workspaceId), 3000);
+                }
+            }
+
+            async function updateChats(workspaceId) {
+                if (!workspaceId || !document.getElementById('chatList')) return;
+                
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/chats`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    
+                    if (response.ok) {
+                        const newChats = await response.json();
+                        
+                        // Only update if we're still on the same workspace
+                        if (currentWorkspaceId === workspaceId) {
+                            const currentChats = window.chats || [];
+                            const hasNewChats = newChats.length > currentChats.length;
+                            const hasUpdates = newChats.some((chat, index) => {
+                                const currentChat = currentChats[index];
+                                return !currentChat || 
+                                    chat.has_unread !== currentChat.has_unread ||
+                                    chat.last_message?.content !== currentChat.last_message?.content;
+                            });
+                            
+                            if (hasNewChats || hasUpdates) {
+                                window.chats = newChats;
+                                displayChats(newChats);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error updating chats:', error);
+                }
+            }
         });
     </script>
 </body>
