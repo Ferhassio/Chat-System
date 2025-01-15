@@ -405,7 +405,7 @@
                 <span class="three-dots" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">⋮</span>
                 <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
                     <li><button class="dropdown-item" id="createWorkspaceBtn">Create Workspace</button></li>
-                    <li><button class="dropdown-item" id="addBotBtn">Add Bot</button></li>
+                    <li><button class="dropdown-item" id="addBotBtn">Manage Bot</button></li>
                     <li><button class="dropdown-item" id="manageUsersBtn">Manage Users</button></li>
                     <li><button class="dropdown-item text-danger" id="logoutBtn">Logout</button></li>
                 </ul>
@@ -503,7 +503,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Add Bot</h5>
+                    <h5 class="modal-title">Manage Bot</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -526,7 +526,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" id="addBotSubmitBtn">Add Bot</button>
+                    <button type="button" class="btn btn-primary" id="addBotSubmitBtn">Manage Bot</button>
                 </div>
             </div>
         </div>
@@ -701,8 +701,16 @@
 
             // Event listeners
             document.getElementById('createWorkspaceBtn').addEventListener('click', () => createWorkspaceModal.show());
-            document.getElementById('addBotBtn').addEventListener('click', () => {
-                loadWorkspacesForBotModal();
+            document.getElementById('addBotBtn').addEventListener('click', async () => {
+                await loadWorkspacesForBotModal();
+                const workspaceId = document.getElementById('botWorkspace').value;
+
+                if (!workspaceId) {
+                    showError('Пожалуйста, выберите рабочее пространство');
+                    return;
+                }
+
+                await loadBotsForWorkspace(workspaceId);
                 addBotModal.show();
             });
             document.getElementById('logoutBtn').addEventListener('click', logout);
@@ -797,12 +805,14 @@
                 if (workspaces.length > 0) {
                     workspaceDropdown.value = workspaces[0].id;
                     loadChats(workspaces[0].id);
+                    loadBotsForWorkspace(workspaces[0].id); // Загрузка ботов для первого воркспейса
                 }
 
                 // Add change event listener
                 workspaceDropdown.addEventListener('change', (e) => {
                     const selectedWorkspaceId = e.target.value;
                     loadChats(selectedWorkspaceId);
+                    loadBotsForWorkspace(selectedWorkspaceId); // Загрузка ботов при переключении воркспейса
                 });
             }
 
@@ -985,7 +995,8 @@
                             </div>
                             <div class="chat-last-message">${chat.last_message?.content || 'No messages'}</div>
                         </div>
-                    `;
+                    </div>
+                `;
                     
                     chatDiv.addEventListener('click', async () => {
                         console.log('Chat clicked:', {
@@ -1582,6 +1593,7 @@
                 stopChatUpdates();
                 const selectedWorkspaceId = e.target.value;
                 loadChats(selectedWorkspaceId);
+                loadBotsForWorkspace(selectedWorkspaceId);
             });
 
             function renderChatList(chats) {
@@ -1775,6 +1787,97 @@
                 } catch (error) {
                     console.error('Error updating chats:', error);
                 }
+            }
+
+            async function loadBotsForWorkspace(workspaceId) {
+                try {
+                    const response = await fetch(`/api/workspaces/${workspaceId}/bots`, {
+                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                    });
+                    if (response.ok) {
+                        const bots = await response.json();
+                        displayBots(bots);
+                    } else {
+                        console.error('Failed to load bots');
+                    }
+                } catch (error) {
+                    console.error('Error loading bots:', error);
+                }
+            }
+
+            function displayBots(bots) {
+                const botListContainer = document.getElementById('botList');
+                if (!botListContainer) {
+                    console.error('Bot list container not found');
+                    return;
+                }
+                if (bots.length === 0) {
+                    botListContainer.innerHTML = '<p>No bots available.</p>';
+                } else {
+                    botListContainer.innerHTML = bots.map(bot => `
+                        <div class="bot-item">
+                            <span>${bot.name}</span>
+                            <button class="btn btn-sm btn-danger" onclick="removeBot('${bot.id}')">Remove</button>
+                        </div>
+                    `).join('');
+                }
+            }
+
+            // Call loadBotsForWorkspace when a workspace is selected
+            const workspaceDropdown = document.getElementById('workspaceDropdown');
+            workspaceDropdown.addEventListener('change', (e) => {
+                const selectedWorkspaceId = e.target.value;
+                loadBotsForWorkspace(selectedWorkspaceId);
+            });
+
+            // Initialize bot list container
+            const botListContainer = document.createElement('div');
+            botListContainer.id = 'botList';
+            botListContainer.style.marginTop = '20px';
+            document.getElementById('addBotModal').querySelector('.modal-body').appendChild(botListContainer);
+
+            // Load bots when the modal is shown
+            document.getElementById('addBotBtn').addEventListener('click', () => {
+                const workspaceId = document.getElementById('botWorkspace').value;
+                if (workspaceId) {
+                    loadBotsForWorkspace(workspaceId);
+                }
+                addBotModal.show();
+            });
+
+            // Define the removeBot function in the global scope
+            window.removeBot = async function(botId) {
+                if (!confirm('Are you sure you want to remove this bot? При удалении, все связанные чаты будут удалены')) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/workspaces/${currentWorkspaceId}/bots/${botId}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`
+                        }
+                    });
+
+                    if (response.ok) {
+                        // Optionally, refresh the bot list or provide feedback
+                        await loadBotsForWorkspace(currentWorkspaceId);
+                    } else {
+                        const error = await response.json();
+                        console.error('Failed to remove bot:', error.detail || 'Unknown error');
+                    }
+                } catch (error) {
+                    console.error('Error removing bot:', error);
+                }
+            };
+
+            // Add change event listener for botWorkspace
+            const botWorkspaceDropdown = document.getElementById('botWorkspace');
+            if (botWorkspaceDropdown) {
+                botWorkspaceDropdown.addEventListener('change', (e) => {
+                    const selectedBotWorkspaceId = e.target.value;
+                    loadBotsForWorkspace(selectedBotWorkspaceId); // Загрузка ботов для выбранного воркспейса
+                });
             }
         });
     </script>

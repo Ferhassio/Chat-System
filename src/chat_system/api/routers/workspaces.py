@@ -3,7 +3,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload, contains_eager
 
@@ -214,20 +214,75 @@ async def add_bot(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{workspace_id}/bots", response_model=List[BotResponse])
-async def get_bots(
+async def get_workspace_bots(
     workspace_id: UUID,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> List[Bot]:
     """Get all bots in workspace"""
-    result = await session.execute(
-        select(Bot).where(
-            Bot.workspace_id == workspace_id,
+    # Check if current user has access to workspace
+    workspace = await session.execute(
+        select(Workspace).where(
             Workspace.id == workspace_id,
             Workspace.owner_id == current_user.id,
         )
     )
-    return result.scalars().all()
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Get all bots in workspace
+    result = await session.execute(
+        select(Bot).where(Bot.workspace_id == workspace_id)
+    )
+    bots = result.scalars().all()
+    return bots
+
+@router.delete("/{workspace_id}/bots/{bot_id}")
+async def remove_workspace_bot(
+    workspace_id: UUID,
+    bot_id: UUID,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Remove bot from workspace"""
+    # Check if current user is workspace owner
+    workspace = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == current_user.id,
+        )
+    )
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission")
+
+    # Check if bot exists in the workspace
+    result = await session.execute(
+        select(Bot).where(
+            Bot.workspace_id == workspace_id,
+            Bot.id == bot_id
+        )
+    )
+    bot = result.scalar_one_or_none()
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot not found in workspace")
+
+    # Delete all messages associated with the bot
+    await session.execute(delete(Message).where(Message.chat_id.in_(
+        select(Chat.id).where(Chat.bot_id == bot.id)
+    )))
+
+    # Delete all analysis results associated with the bot
+    await session.execute(delete(AnalysisResult).where(AnalysisResult.chat_id.in_(
+        select(Chat.id).where(Chat.bot_id == bot.id)
+    )))
+
+    # Delete the bot
+    await session.delete(bot)
+    await session.commit()
+
+    return {"status": "success"}
 
 @router.get("/{workspace_id}/chats", response_model=List[ChatResponse])
 async def get_chats(
