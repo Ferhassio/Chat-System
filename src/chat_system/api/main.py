@@ -14,10 +14,10 @@ from src.chat_system.db.session import engine
 from src.chat_system.telegram.manager import telegram_manager
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+# )
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager

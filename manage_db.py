@@ -6,7 +6,6 @@ from src.chat_system.db.session import engine
 from src.chat_system.db.models import Base
 from src.chat_system.core.cache import cache
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def recreate_database():

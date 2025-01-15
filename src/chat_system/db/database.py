@@ -14,13 +14,13 @@ from src.chat_system.core.config import settings
 from src.chat_system.db.models import Base
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
+logging.getLogger('sqlalchemy.engine.Engine').disabled = True
 
 class Database:
     def __init__(self):
         self._engine: AsyncEngine = create_async_engine(
             settings.DATABASE_URL,
-            echo=settings.DEBUG,
+            echo=False,
             pool_size=100,
             max_overflow=30,
             pool_timeout=30,

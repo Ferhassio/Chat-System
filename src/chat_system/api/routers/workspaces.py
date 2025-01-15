@@ -23,10 +23,10 @@ from src.chat_system.db.models import Bot, Chat, Message, User, Workspace, Works
 from src.chat_system.telegram.manager import telegram_manager
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logging.basicConfig()
+# For debugging
+logging.getLogger('sqlalchemy.engine.Engine').disabled = True
 
-# Set SQLAlchemy engine logging level to WARNING to hide detailed query logs
-logging.getLogger('sqlalchemy.engine.Engine').setLevel(logging.WARNING)
 
 async def get_workspace_or_404(session: AsyncSession, workspace_id: UUID, current_user: User) -> Workspace:
     """Get workspace by id or raise 404 if not found or no access"""
@@ -133,14 +133,14 @@ async def add_bot(
         # Get existing chats and messages for this bot
         bot_info = await telegram_manager.get_bot_info(workspace_id, db_bot.id)
         if bot_info:
-            logger.info(f"Got bot info: {bot_info['id']}")
+            logging.info(f"Got bot info: {bot_info['id']}")
             
             # Get all chats for this bot
             chats = await telegram_manager.get_bot_chats(workspace_id, db_bot.id)
-            logger.info(f"Found {len(chats)} chats")
+            logging.info(f"Found {len(chats)} chats")
             
             for chat in chats:
-                logger.info(f"Processing chat: {chat.id} ({chat.username})")
+                logging.info(f"Processing chat: {chat.id} ({chat.username})")
                 
                 # Create chat record if not exists
                 result = await session.execute(
@@ -160,13 +160,13 @@ async def add_bot(
                     )
                     session.add(db_chat)
                     await session.flush()
-                    logger.info(f"Created new chat record: {db_chat.id}")
+                    logging.info(f"Created new chat record: {db_chat.id}")
                 else:
-                    logger.info(f"Using existing chat record: {db_chat.id}")
+                    logging.info(f"Using existing chat record: {db_chat.id}")
 
                 # Get chat history
                 messages = await telegram_manager.get_chat_history(workspace_id, chat.id, db_bot.id)
-                logger.info(f"Got {len(messages)} messages from history")
+                logging.info(f"Got {len(messages)} messages from history")
                 
                 for msg in messages:
                     if not msg.text:  # Skip non-text messages
@@ -192,15 +192,15 @@ async def add_bot(
                         direction=MessageDirection.OUTGOING if is_outgoing else MessageDirection.INCOMING,
                     )
                     session.add(db_message)
-                    logger.info(f"Added message: {msg.text[:50]}...")
+                    logging.info(f"Added message: {msg.text[:50]}...")
                 
                 # Update last message time
                 if messages:
                     db_chat.last_message_at = messages[-1].date.replace(tzinfo=None)  # Remove timezone info
-                    logger.info(f"Updated chat last_message_at to {db_chat.last_message_at}")
+                    logging.info(f"Updated chat last_message_at to {db_chat.last_message_at}")
         
         await session.commit()
-        logger.info("Successfully added bot and imported history")
+        logging.info("Successfully added bot and imported history")
         return db_bot
         
     except Exception as e:
@@ -208,7 +208,7 @@ async def add_bot(
         # Cleanup bot if it was initialized
         if 'db_bot' in locals() and db_bot.id:
             await telegram_manager.cleanup_bot(workspace_id, db_bot.id)
-        logger.error(f"Failed to add bot: {str(e)}", exc_info=True)
+        logging.error(f"Failed to add bot: {str(e)}", exc_info=True)
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e))
@@ -251,13 +251,13 @@ async def get_chats(
         .order_by(Chat.last_message_at.desc())
     )
     chats = result.unique().scalars().all()
-    logger.info(f"Found {len(chats)} chats")
+    logging.info(f"Found {len(chats)} chats")
     
     # Convert to ChatResponse objects using from_orm
     chat_list = []
     for chat in chats:
         chat_response = ChatResponse.from_orm(chat)
-        logger.info(f"Chat {chat.id} for bot {chat.bot.name} ({chat.bot_id})")
+        logging.info(f"Chat {chat.id} for bot {chat.bot.name} ({chat.bot_id})")
         chat_list.append(chat_response)
     
     return chat_list
@@ -538,7 +538,7 @@ async def get_chat_analysis(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Get analysis data for a specific chat and bot"""
-    logger.debug(f"Fetching analysis for workspace_id: {workspace_id}, chat_id: {chat_id}, bot_id: {bot_id}")
+    logging.debug(f"Fetching analysis for workspace_id: {workspace_id}, chat_id: {chat_id}, bot_id: {bot_id}")
 
     # Check if user has access to workspace (either owner or member)
     workspace_access = await session.execute(
@@ -556,7 +556,7 @@ async def get_chat_analysis(
     
     workspace = workspace_access.scalar_one_or_none()
     if not workspace:
-        logger.error("Workspace not found or access denied")
+        logging.error("Workspace not found or access denied")
         raise HTTPException(
             status_code=404, 
             detail="Рабочее пространство не найдено или у вас нет к нему доступа"
@@ -572,7 +572,7 @@ async def get_chat_analysis(
     )
     chat = result.scalar_one_or_none()
     if not chat:
-        logger.error(f"Chat not found for chat_id: {chat_id}, workspace_id: {workspace_id}, bot_id: {bot_id}")
+        logging.error(f"Chat not found for chat_id: {chat_id}, workspace_id: {workspace_id}, bot_id: {bot_id}")
         raise HTTPException(status_code=404, detail="Чат не найден")
 
     # Fetch analysis data from the database
@@ -584,8 +584,8 @@ async def get_chat_analysis(
     )
     analysis = result.scalar_one_or_none()
     if not analysis:
-        logger.error(f"Analysis not found for chat_id: {chat_id}, workspace_id: {workspace_id}")
+        logging.error(f"Analysis not found for chat_id: {chat_id}, workspace_id: {workspace_id}")
         raise HTTPException(status_code=404, detail="Анализ не найден")
 
-    logger.info("Analysis data retrieved successfully")
+    logging.info("Analysis data retrieved successfully")
     return {"analysis_data": analysis.analysis_data} 

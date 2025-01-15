@@ -200,17 +200,74 @@
         .ai-button:hover {
             background-color: #218838;
         }
+        .general-info {
+            font-weight: bold;
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #444;
+        }
+        .name-info {
+            font-style: italic;
+            font-size: 1.1em;
+            margin-bottom: 15px;
+            color: #666;
+        }
+        .field {
+            margin-bottom: 8px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            background-color: #f7f7f7;
+            display: flex;
+            align-items: center;
+            transition: background-color 0.3s ease;
+        }
+        .field:hover {
+            background-color: #e9ecef;
+        }
+        .field-icon {
+            margin-right: 12px;
+            color: #007bff;
+        }
+        .client-card {
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            background-color: #fff;
+        }
+        .navbar .dropdown-menu {
+            background-color: #3a3f44;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+        .navbar .dropdown-item {
+            color: #e9ecef;
+        }
+        .navbar .dropdown-item:hover {
+            background-color: #4b5258;
+        }
+        .navbar .dropdown-toggle::after {
+            display: none;
+        }
+        .navbar .three-dots {
+            font-size: 1.5em;
+            color: #e9ecef;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="#">Chat System</a>
-            <div class="d-flex">
-                <button class="btn btn-outline-light me-2" id="createWorkspaceBtn">Create Workspace</button>
-                <button class="btn btn-outline-light me-2" id="addBotBtn">Add Bot</button>
-                <button class="btn btn-outline-light me-2" id="manageUsersBtn">Manage Users</button>
-                <button class="btn btn-outline-danger" id="logoutBtn">Logout</button>
+            <div class="dropdown ms-auto">
+                <span class="three-dots" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">⋮</span>
+                <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
+                    <li><button class="dropdown-item" id="createWorkspaceBtn">Create Workspace</button></li>
+                    <li><button class="dropdown-item" id="addBotBtn">Add Bot</button></li>
+                    <li><button class="dropdown-item" id="manageUsersBtn">Manage Users</button></li>
+                    <li><button class="dropdown-item text-danger" id="logoutBtn">Logout</button></li>
+                </ul>
             </div>
         </div>
     </nav>
@@ -371,7 +428,13 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p id="aiAnalysisContent">Loading...</p>
+                    <div id="mainInfo">
+                        <p id="aiAnalysisContent">Loading...</p>
+                    </div>
+                    <hr>
+                    <div id="clientCard" class="client-card">
+                        <!-- JSON fields will be inserted here -->
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -1382,19 +1445,70 @@
                     
                     if (response.ok) {
                         const data = await response.json();
-                        const formattedData = JSON.stringify(data.analysis_data, null, 2); // Format JSON with indentation
-                        document.getElementById('aiAnalysisContent').innerText = formattedData || 'No analysis available.';
+                        const analysisData = data.analysis_data;
+                        displayClientCard(analysisData);
+                        document.getElementById('aiAnalysisContent').innerText = 'Данные обновлены';
                     } else {
-                        document.getElementById('aiAnalysisContent').innerText = 'Failed to fetch analysis.';
+                        document.getElementById('aiAnalysisContent').innerText = 'Ошибка обновления';
                     }
                     
                     const aiModal = new bootstrap.Modal(document.getElementById('aiModal'));
                     aiModal.show();
                 } catch (error) {
                     console.error('Error fetching analysis:', error);
-                    document.getElementById('aiAnalysisContent').innerText = 'Error fetching analysis.';
+                    document.getElementById('aiAnalysisContent').innerText = 'Ошибка обновления';
                 }
             });
+
+            function displayClientCard(jsonData) {
+                const clientCard = document.getElementById('clientCard');
+                clientCard.innerHTML = ''; // Clear previous content
+
+                // General Information
+                const generalInfoDiv = document.createElement('div');
+                generalInfoDiv.className = 'general-info';
+                generalInfoDiv.textContent = jsonData.client_summary || 'Insufficient data for general information';
+                clientCard.appendChild(generalInfoDiv);
+
+                // Name and Surname
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'name-info';
+                const name = jsonData.client_name_from_chat || 'Insufficient data for name';
+                nameDiv.textContent = `Name: ${name}`;
+                clientCard.appendChild(nameDiv);
+
+                // Synonyms for keys
+                const synonyms = {
+                    client_city: 'City',
+                    avg_spent: 'Spent',
+                    desired_item: 'Item',
+                    client_nature: 'Nature',
+                    client_sex: 'Sex',
+                    client_phone_number: 'Phone'
+                };
+
+                // Icons for fields
+                const icons = {
+                    City: '🏙️',
+                    Spent: '💰',
+                    Item: '📦',
+                    Nature: '🌟',
+                    Sex: '⚥',
+                    Phone: '📞'
+                };
+
+                // Other Fields
+                for (const [key, value] of Object.entries(jsonData)) {
+                    if (key !== 'client_summary' && key !== 'client_name_from_chat' && value) { // Exclude already displayed fields
+                        const fieldDiv = document.createElement('div');
+                        fieldDiv.className = 'field';
+                        const displayKey = synonyms[key] || key;
+                        const icon = icons[displayKey] || '';
+                        fieldDiv.innerHTML = `<span class="field-icon">${icon}</span>${displayKey}: ${value}`;
+                        clientCard.appendChild(fieldDiv);
+                    }
+                }
+            }
         });
     </script>
 </body>

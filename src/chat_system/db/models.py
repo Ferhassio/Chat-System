@@ -13,7 +13,6 @@ from src.chat_system.db.base import Base
 from src.chat_system.db.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)
 
 class Message(Base):
     """Message model"""
