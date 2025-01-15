@@ -593,6 +593,31 @@
         </div>
     </div>
 
+    <!-- Edit Bot Modal -->
+    <div class="modal fade" id="editBotModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Bot Token</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editBotForm">
+                        <input type="hidden" id="editBotId">
+                        <div class="mb-3">
+                            <label for="editBotToken" class="form-label">New Bot Token</label>
+                            <input type="text" class="form-control" id="editBotToken" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="editBotSubmitBtn">Update</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="placeholderMessage" class="text-center">
         <h4>Please select a chat to view messages and recommendations.</h4>
     </div>
@@ -1818,6 +1843,7 @@
                         <div class="bot-item">
                             <span>${bot.name}</span>
                             <button class="btn btn-sm btn-danger" onclick="removeBot('${bot.id}')">Remove</button>
+                            <button class="btn btn-sm btn-warning" onclick="showEditBotModal('${bot.id}', '${bot.token}')">Edit</button>
                         </div>
                     `).join('');
                 }
@@ -1879,6 +1905,49 @@
                     loadBotsForWorkspace(selectedBotWorkspaceId); // Загрузка ботов для выбранного воркспейса
                 });
             }
+
+            // Определите функцию в глобальной области видимости
+            window.showEditBotModal = function(botId, currentToken) {
+                document.getElementById('editBotId').value = botId;
+                document.getElementById('editBotToken').value = currentToken;
+                const editBotModal = new bootstrap.Modal(document.getElementById('editBotModal'));
+                editBotModal.show();
+            };
+
+            document.getElementById('editBotSubmitBtn').addEventListener('click', async () => {
+                const botId = document.getElementById('editBotId').value;
+                const newToken = document.getElementById('editBotToken').value;
+
+                if (!newToken) {
+                    showError('Пожалуйста, введите новый токен');
+                    return;
+                }
+
+                try {
+                    console.log('Sending data:', { token: newToken }); // Логирование отправляемых данных
+                    const response = await fetch(`/api/workspaces/${currentWorkspaceId}/bots/${botId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ token: newToken })  // Добавьте имя бота, если это требуется
+                    });
+                    console.log('Response:', response);
+                    if (response.ok) {
+                        await loadBotsForWorkspace(currentWorkspaceId); // Обновить список ботов
+                        document.getElementById('editBotForm').reset(); // Сбросить форму
+                        const editBotModal = bootstrap.Modal.getInstance(document.getElementById('editBotModal'));
+                        editBotModal.hide(); // Закрыть модальное окно
+                    } else {
+                        const error = await response.json();
+                        showError(error.detail || 'Ошибка при обновлении токена');
+                    }
+                } catch (error) {
+                    console.error('Error updating bot token:', error);
+                    showError('Ошибка при обновлении токена');
+                }
+            });
         });
     </script>
 </body>

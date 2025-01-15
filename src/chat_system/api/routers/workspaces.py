@@ -644,3 +644,45 @@ async def get_chat_analysis(
 
     logging.info("Analysis data retrieved successfully")
     return {"analysis_data": analysis.analysis_data} 
+
+@router.put("/{workspace_id}/bots/{bot_id}", response_model=BotResponse)
+async def update_bot_key(
+    workspace_id: UUID,
+    bot_id: UUID,
+    bot: BotCreate,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Bot:
+    """Update bot key in workspace"""
+    # Check if current user is workspace owner
+    workspace = await session.execute(
+        select(Workspace).where(
+            Workspace.id == workspace_id,
+            Workspace.owner_id == current_user.id,
+        )
+    )
+    workspace = workspace.scalar_one_or_none()
+    if not workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found or you don't have permission")
+
+    # Check if bot exists in the workspace
+    result = await session.execute(
+        select(Bot).where(
+            Bot.workspace_id == workspace_id,
+            Bot.id == bot_id
+        )
+    )
+    bot_to_update = result.scalar_one_or_none()
+    if not bot_to_update:
+        raise HTTPException(status_code=404, detail="Bot not found in workspace")
+
+    
+    # Initialize bot with bot_id
+    if not await telegram_manager.initialize_bot(workspace_id, bot.token, bot_id):
+        raise HTTPException(status_code=400, detail="Failed to initialize bot")
+
+    # Обновление токена
+    bot_to_update.token = bot.token
+    await session.commit()
+
+    return bot_to_update 

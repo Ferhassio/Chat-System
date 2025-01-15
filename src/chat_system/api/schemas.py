@@ -66,11 +66,14 @@ class WorkspaceResponse(WorkspaceBase):
         from_attributes = True
 
 class BotBase(BaseModel):
-    name: str
+    name: Optional[str] = None
     token: str
 
 class BotCreate(BotBase):
-    pass
+    token: str
+
+class BotUpdate(BotBase):
+    token: str
 
 class BotResponse(BotBase):
     id: UUID
