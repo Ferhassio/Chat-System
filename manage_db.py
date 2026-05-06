@@ -15,7 +15,7 @@ async def recreate_database():
         conn = psycopg2.connect(
             dbname="postgres",
             user="postgres",
-            password="VetkaSotona666",
+            password="66666VetkaSotona666666",
             host="localhost",
             port="5432"
         )
